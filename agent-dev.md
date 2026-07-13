@@ -19,11 +19,11 @@ pre-check using `gh` CLI to avoid burning Claude Code quota on no-op runs.
 
 ```bash
 # Step 1: Global in-progress guard
-gh issue list --repo Premier-platform/premier-core --label "in progress" --state open --json number,title --limit 5
+gh issue list --repo <owner>/<repo> --label "in progress" --state open --json number,title --limit 5
 
 # Step 2: Check for eligible trigger labels
-gh issue list --repo Premier-platform/premier-core --label "todo" --state open --json number,title --limit 5
-gh issue list --repo Premier-platform/premier-core --label "feedback" --state open --json number,title --limit 5
+gh issue list --repo <owner>/<repo> --label "todo" --state open --json number,title --limit 5
+gh issue list --repo <owner>/<repo> --label "feedback" --state open --json number,title --limit 5
 ```
 
 Decision rules:
@@ -62,22 +62,22 @@ This prevents stale `in progress` issues from accumulating and ensures interrupt
 
 One task at a time means both workflow state **and Agent Dev-owned host processes**. The GitHub label guard is not enough, but another agent's valid process is not automatically a blocker.
 
-Before starting any new Premier Dev work, Agent Dev must check for active/stalled Premier Dev runs and leftover local dev/test processes, especially:
+Before starting any new dev work, Agent Dev must check for active/stalled Agent Dev runs and leftover local dev/test processes, especially:
 
 - `next-server` / `next dev`
 - Playwright / browser test processes
 - `npm`, `npm ci`, `npm test`, or `npm run test:e2e`
-- Node processes running from Premier worktrees
+- Node processes running from project worktrees
 
 When processes exist:
 
 1. Identify whether each process belongs to Agent Dev's current valid task, a stale/interrupted Agent Dev run, another active Agent Dev run, another agent/session, or an unrelated user/system process.
-2. Agent Dev must not start a second Premier dev server/test server if an Agent Dev-owned Premier server is already active. Reuse the healthy current-task server or safely stop stale Agent Dev-owned dev/test processes first.
-3. Do not kill or block solely because another agent has a legitimate Premier server/process. Avoid touching another agent's active workspace/process unless Arief explicitly asks or ownership is clearly stale and unsafe.
+2. Agent Dev must not start a second project dev server/test server if an Agent Dev-owned server is already active. Reuse the healthy current-task server or safely stop stale Agent Dev-owned dev/test processes first.
+3. Do not kill or block solely because another agent has a legitimate project server/process. Avoid touching another agent's active workspace/process unless the human owner explicitly asks or ownership is clearly stale and unsafe.
 4. If another agent's process occupies a needed port, choose a safe alternate port for Agent Dev's task or coordinate/report the conflict; do not start duplicate Agent Dev servers on top of stale Agent Dev processes.
 5. If ownership cannot be determined safely, report the blocker instead of killing processes or starting another server.
 
-Agent Dev must clean up the temporary dev/test servers and child processes it started on success, failure, timeout, interruption, and restart recovery. A previous incident left multiple stale Agent Dev Premier `next-server` processes running after cron retries/stalls, causing OOM; do not repeat this.
+Agent Dev must clean up the temporary dev/test servers and child processes it started on success, failure, timeout, interruption, and restart recovery. A previous incident left multiple stale Agent Dev dev-server processes running after cron retries/stalls, causing OOM; do not repeat this.
 
 ## Startup checklist
 
@@ -128,7 +128,7 @@ Required steps for `feedback` issues:
 1. Find the existing open PR linked from the issue body, issue comments, or PR bodies/titles.
 2. If exactly one existing open PR is related to the issue, checkout that PR branch and apply the feedback fix there.
 3. Push the fix to the same branch/PR, then move the issue from `in progress` to `qa ready`.
-4. If multiple open PRs are related to the same issue, stop and ask Arief which PR is canonical unless the issue comments clearly identify one canonical PR.
+4. If multiple open PRs are related to the same issue, stop and ask the human owner which PR is canonical unless the issue comments clearly identify one canonical PR.
 5. Create a new PR only when no related open PR exists, the prior PR was closed/merged, or the existing branch is unrecoverable. The issue comment must explain why a new PR was necessary and link any superseded PR.
 
 This keeps QA feedback threaded on the same PR and avoids duplicate PRs for the same issue.
@@ -141,17 +141,17 @@ This keeps QA feedback threaded on the same PR and avoids duplicate PRs for the 
 
 ## Runtime env for local tests
 
-Some Premier issues require runtime environment variables for local tests, Playwright, or pages that touch Supabase/API-backed flows.
+Some issues require runtime environment variables for local tests, Playwright, or pages that touch database/API-backed flows.
 
 Before guessing env values or marking an env-dependent issue blocked:
 
 1. Check GitHub Actions repository variables/secrets metadata for the required variable names.
-2. Use the local runtime env file Arief provided at `/home/ariefgusti/.config/premier-core/.env.local`.
-3. In the active Premier worktree, symlink it with:
+2. Use the local runtime env file the human owner provided at `<runtime-env-file-path>`.
+3. In the active worktree, symlink it with:
    ```bash
-   ln -sf /home/ariefgusti/.config/premier-core/.env.local .env.local
+   ln -sf <runtime-env-file-path> .env.local
    ```
-4. Arief explicitly allows Agent Dev to access/use this env file for Premier testing. It is okay to load it via Next.js, scripts, tests, or controlled shell commands when needed for verification.
+4. The human owner explicitly allows Agent Dev to access/use this env file for local testing. It is okay to load it via the framework, scripts, tests, or controlled shell commands when needed for verification.
 5. Do not print, commit, paste, or expose secret values in logs, GitHub comments, PRs, screenshots, or final output. If inspection is necessary, prefer checking variable presence/names rather than values.
 6. Keep `.env.local` untracked. If the file is missing or the env-backed check fails with a concrete error, report that blocker clearly instead of fabricating env values.
 
@@ -171,7 +171,7 @@ Every PR created or updated by Agent Dev must make the issue relationship explic
 
 - Fresh `todo` work: include the related issue using `Fixes #<issue-number>` or the full issue URL.
 - `feedback` work: update the existing PR body if needed so it still links the related issue and any parent/older PR.
-- Follow-up/supplement PRs: link both the related issue and the parent/older PR, and make the newer PR target the older PR branch unless Arief explicitly says otherwise.
+- Follow-up/supplement PRs: link both the related issue and the parent/older PR, and make the newer PR target the older PR branch unless the human owner explicitly says otherwise.
 - Multi-PR issues: ensure the issue body has a `Related PRs` section listing active related PRs.
 
 Do not hand off as `qa ready` until the PR body visibly links the issue.

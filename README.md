@@ -55,11 +55,11 @@ The `.agents/` files are the single source of truth — the cron payload is a th
 
 ## Adapting to your repo
 
-These files are a working example lifted from a production project (Premier), so they contain project-specific values you must replace:
+These files always refer to one repository: the repo that contains the `.agents/` directory. Project-specific values are expressed as placeholders your cron wrapper/prompt must supply:
 
 1. Copy the `.agents/` directory into your repo.
-2. Replace the repo slug (`Premier-platform/premier-core`) in the pre-check `gh` commands.
-3. Replace or remove the project-notes paths and env-file paths (`premier-core-notes`, `.env.local` locations) with your own project context sources.
+2. Supply `<owner>/<repo>` (your repo's GitHub slug) for the pre-check `gh` commands, and `<repo-path>` (local checkout path) for the CLI invocation.
+3. Optionally supply `<notes-repo-local-path>` / `<notes-repo-url>` (a companion project-context notes repo) and `<runtime-env-file-path>` (a local env file for env-dependent tests). Agents skip those steps if not configured.
 4. Adjust project conventions (design system rules, E2E test requirements, coding standards) to match your stack.
 5. Set up cron jobs pointing at your repo using the wrapper pattern above.
 6. Create the state labels in GitHub: `to be planned`, `need confirmation`, `plan approval`, `todo`, `in progress`, `qa ready`, `qa in progress`, `review ready`, `feedback`, `done`.

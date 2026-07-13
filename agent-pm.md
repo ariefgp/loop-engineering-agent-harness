@@ -18,7 +18,7 @@ Before invoking `claude -p`, the OpenClaw cron session MUST perform a lightweigh
 pre-check using `gh` CLI to avoid burning Claude Code quota on no-op runs.
 
 ```bash
-gh issue list --repo Premier-platform/premier-core --label "to be planned" --state open --json number,title --limit 5
+gh issue list --repo <owner>/<repo> --label "to be planned" --state open --json number,title --limit 5
 ```
 
 Decision rules:
@@ -46,19 +46,19 @@ This rule exists because asking questions that the code already answers wastes h
 
 ## Project notes and brief alignment
 
-Before creating or finalizing a PM ticket/spec, Agent PM MUST check the Premier notes repository and align the ticket with the project brief.
+If the project has a companion notes repository configured, Agent PM MUST check it before creating or finalizing a PM ticket/spec and align the ticket with the project brief. If none is configured, skip these steps and rely on issue evidence, source code, and in-repo documentation.
 
 Canonical notes repository:
 
-- Local path: `/home/ariefgusti/.openclaw/agents/abby/workspace/premier-core-notes`
-- Source: `https://github.com/ariefgp/premier-core-notes`
+- Local path: `<notes-repo-local-path>`
+- Source: `<notes-repo-url>`
 
 Required steps:
 
 1. Read `README.md` to understand which notes are relevant.
 2. Read `context.md` for the high-level product brief and platform philosophy.
-3. Inspect the most relevant notes for the ticket, including `spec/`, `design-review.md`, `design_screen/`, `premier-story-to-figma-screen-map.md`, `user-stories/`, or discovery documents as applicable.
-4. Make sure the ticket's goal, language, user role, expected behavior, constraints, and acceptance criteria align with the Premier brief and canonical decisions.
+3. Inspect the most relevant notes for the ticket, including domain specs, design review notes, design screen references, story-to-screen maps, user stories, or discovery documents as applicable.
+4. Make sure the ticket's goal, language, user role, expected behavior, constraints, and acceptance criteria align with the project brief and canonical decisions.
 5. Add a `Project brief alignment` section to the PM spec summarizing which note files were checked and how the ticket aligns.
 6. If the notes conflict with the issue request, reveal a missing business rule, or leave any product ambiguity, ask the clarification in the GitHub ticket and move/keep the issue in `need confirmation` when it blocks development.
 
@@ -86,7 +86,7 @@ Agent PM MUST resolve questions from existing context before asking the human. B
 - Related active GitHub issues and PRs.
 - Current issue body, comments, screenshots, Figma links, and evidence.
 - Relevant source code and existing product/UI patterns.
-- `premier-core-notes` project brief, specs, design review, and user stories.
+- The project notes repository brief, specs, design review, and user stories (if configured).
 
 Rules:
 
@@ -103,7 +103,7 @@ Every open question should include Agent PM's best recommendation when enough co
 
 - `Question:` the exact confirmation needed.
 - `Recommendation:` the preferred answer or option.
-- `Why:` the short rationale, citing related issues, design evidence, code, or `premier-core-notes` where relevant.
+- `Why:` the short rationale, citing related issues, design evidence, code, or the project notes repository where relevant.
 
 If no safe recommendation can be made, write `Recommendation: No recommendation yet` and explain the missing evidence in `Why`. Do not leave the human with a broad question when the agent can narrow it to a recommended option.
 
@@ -123,7 +123,7 @@ Clear, action-oriented. Format: `[Feature/Fix/Chore]: <what it does>`
 Cite the specific files, components, functions, and current behavior observed in the source code. Include relevant code snippets or class names that define the current implementation. This section is required when the issue relates to existing code.
 
 ### Project brief alignment
-List the specific files checked in `/home/ariefgusti/.openclaw/agents/abby/workspace/premier-core-notes` and summarize how the ticket aligns with the Premier project brief, domain rules, user roles, design intent, and relevant user stories. If no matching note exists, state what was checked and why the ticket still fits or why confirmation is needed.
+List the specific files checked in the project notes repository (`<notes-repo-local-path>`) and summarize how the ticket aligns with the project brief, domain rules, user roles, design intent, and relevant user stories. If no matching note exists, state what was checked and why the ticket still fits or why confirmation is needed. If no notes repository is configured, state that and cite the in-repo sources used instead.
 
 ### Resolved from related issues
 List answers derived from related active issues, PRs, design evidence, code, or project notes before asking the human. Use the format `Resolved from #<issue-or-pr>: <answer>` when another GitHub item provides the answer. If none were resolved from related issues, write `None`.

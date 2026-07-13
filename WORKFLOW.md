@@ -158,16 +158,23 @@ operations within the workspace. Agents must still follow the hard constraints
 defined in their `.agents/agent-<role>.md` files (never merge, never push to
 main directly, only implement acceptance criteria, etc.).
 
-### Portability
+### Portability and host configuration
+
+These files always refer to exactly one repository: **the repository that contains this `.agents/` directory** (the "target repo"). Placeholders used throughout the files are supplied by the host project's cron wrapper/prompt:
+
+- `<owner>/<repo>` — the GitHub slug of the target repo (used in `gh --repo` pre-check commands).
+- `<repo-path>` — the local checkout path of the target repo.
+- `<notes-repo-local-path>` / `<notes-repo-url>` — optional companion notes repository for project context. Skip notes steps if not configured.
+- `<runtime-env-file-path>` — optional local runtime env file for env-dependent tests. Report a blocker if required but not configured.
 
 To reuse this workflow in another repo:
 1. Copy the `.agents/` directory (WORKFLOW.md, agent-pm.md, agent-dev.md, agent-qa.md)
-2. Update repo paths, project notes paths, and any project-specific conventions
-3. Set up OpenClaw cron jobs pointing to the new repo path with the same wrapper pattern
+2. Supply concrete values for the placeholders above in the cron wrapper/prompt, and adjust any project-specific conventions
+3. Set up cron jobs pointing to the new repo path with the same wrapper pattern
 
 ## PR and issue linking
 
-Every PR must explicitly link its related GitHub issue in the PR body. Use a full issue URL or GitHub closing/reference keyword such as `Fixes #<issue-number>`, `Closes #<issue-number>`, or `Related issue: https://github.com/Premier-platform/premier-core/issues/<issue-number>`.
+Every PR must explicitly link its related GitHub issue in the PR body. Use a full issue URL or GitHub closing/reference keyword such as `Fixes #<issue-number>`, `Closes #<issue-number>`, or `Related issue: <full URL of the issue in this repository>`.
 
 If a PR is a follow-up, feedback fix, supplement, or stack on another PR, the PR body must also link the related parent/older PR. The related issue body should include a `Related PRs` section when multiple active PRs belong to the same issue.
 
@@ -190,7 +197,7 @@ All agents must use real application data for development, testing, and QA acros
 - Agent Dev must implement pages and UI states against real data sources, not hardcoded demo/static records. If required records do not exist for the flow, seed the database using the project's approved seed/migration/factory path and document the seed data.
 - Agent QA must verify pages against real application data from the database/API. If the needed data is unavailable, QA must seed the database before testing when safe and supported by the project. If seeding is not possible, QA must mark the test as blocked/feedback instead of passing with static data.
 - Any seeded test data must be documented in the issue/PR QA notes, including what was seeded, how it was seeded, and how another agent can reproduce it.
-- Do not mark an issue `review ready` based only on static screenshots, hardcoded page states, mocked fixture data, Storybook-only views, or local-only fake data unless the issue is explicitly scoped to that isolated fixture and Arief approves that exception.
+- Do not mark an issue `review ready` based only on static screenshots, hardcoded page states, mocked fixture data, Storybook-only views, or local-only fake data unless the issue is explicitly scoped to that isolated fixture and the human owner approves that exception.
 
 ## Active ticket dependency check
 
@@ -212,7 +219,7 @@ The owning agent must not ask an open confirmation question until it has tried t
 - Related active GitHub issues and PRs.
 - The current issue body, comments, screenshots, Figma links, and other evidence.
 - Relevant source code and existing product patterns.
-- The `premier-core-notes` project context and brief.
+- The project notes repository context and brief (if configured — see "Project brief and notes alignment").
 
 If another active issue or PR answers the question, document the answer as `Resolved from #<issue-or-pr>: <answer>` instead of asking the human again.
 
@@ -233,16 +240,18 @@ If the agent does not have enough evidence to recommend an answer safely, it mus
 
 ## Project brief and notes alignment
 
-The canonical project context and discovery notes are kept in the local companion repository:
+If the project has a companion notes repository, its canonical project context and discovery notes are kept at:
 
-- Local path: `/home/ariefgusti/.openclaw/agents/abby/workspace/premier-core-notes`
-- Source: `https://github.com/ariefgp/premier-core-notes`
+- Local path: `<notes-repo-local-path>`
+- Source: `<notes-repo-url>`
 
-Before creating, planning, finalizing, developing, or reviewing a ticket, the owning agent must use these notes as project context and make sure the ticket remains aligned with the Premier brief. At minimum, read `README.md` and `context.md` when unfamiliar with the area, then inspect the most relevant files for the ticket, such as:
+Before creating, planning, finalizing, developing, or reviewing a ticket, the owning agent must use these notes as project context and make sure the ticket remains aligned with the project brief. At minimum, read `README.md` and `context.md` when unfamiliar with the area, then inspect the most relevant files for the ticket, such as:
 
 - `spec/` for canonical domain rules, glossary, states, permissions, notifications, handoffs, source of truth, and compliance lineage.
-- `design-review.md`, `design_screen/`, and `premier-story-to-figma-screen-map.md` for design/screen alignment.
+- Design review notes, design screen references, and story-to-screen maps for design/screen alignment.
 - `user-stories/` and discovery documents for backlog intent and accepted user flows.
+
+If the project has no notes repository configured, skip the notes steps and rely on the issue evidence, source code, and in-repo documentation.
 
 If the ticket conflicts with the notes, is underspecified compared with the brief, or the agent is confused after checking the notes, do not guess. Ask the needed clarification directly in the GitHub ticket, record the relevant note/file reference, and use `need confirmation` when the ambiguity blocks safe work.
 
@@ -252,11 +261,11 @@ If the ticket conflicts with the notes, is underspecified compared with the brie
 
 One issue at a time must include process ownership, not only labels. Agents should avoid leaving behind dev/test servers, but one agent must not treat another agent's legitimate active server as an automatic blocker.
 
-For Premier Dev work:
+For project dev work:
 
-- Before starting a dev server, E2E run, or long-running local process, check existing Premier `next-server`, Playwright, npm, and worktree Node processes.
+- Before starting a dev server, E2E run, or long-running local process, check existing project dev-server, Playwright, npm, and worktree Node processes.
 - Identify ownership where possible: current agent/current task, stale interrupted run, another active agent/session, or unrelated system/user process.
-- Each agent is responsible for not running multiple Premier dev/test servers by itself. Reuse or safely stop its own stale processes before starting another.
+- Each agent is responsible for not running multiple project dev/test servers by itself. Reuse or safely stop its own stale processes before starting another.
 - Do not kill or block solely because another agent has a legitimate active process. If another agent occupies a needed port, use a safe alternate port or report/coordinate.
 - Always clean up dev/test processes started by the agent on success, failure, timeout, interruption, and restart recovery.
 

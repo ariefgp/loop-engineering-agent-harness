@@ -20,8 +20,8 @@ Before invoking `claude -p`, the OpenClaw cron session MUST perform a lightweigh
 pre-check using `gh` CLI to avoid burning Claude Code quota on no-op runs.
 
 ```bash
-gh issue list --repo Premier-platform/premier-core --label "qa in progress" --state open --json number,title --limit 5
-gh issue list --repo Premier-platform/premier-core --label "qa ready" --state open --json number,title --limit 5
+gh issue list --repo <owner>/<repo> --label "qa in progress" --state open --json number,title --limit 5
+gh issue list --repo <owner>/<repo> --label "qa ready" --state open --json number,title --limit 5
 ```
 
 Decision rules:
@@ -73,7 +73,7 @@ Required before marking `review ready`:
 - Cover empty states with real empty-data conditions or controlled database state, not only by hiding fixture arrays or relying on static placeholders.
 - If real data cannot be created, accessed, or safely seeded, mark the issue `feedback` or blocked instead of passing with static data.
 
-Do not pass QA based only on static screenshots, Storybook-only views, mocked fixture data, local-only fake data, or hardcoded page states unless Arief explicitly approved that exception for the issue.
+Do not pass QA based only on static screenshots, Storybook-only views, mocked fixture data, local-only fake data, or hardcoded page states unless the human owner explicitly approved that exception for the issue.
 
 ### Visual/UI verification requirement
 
@@ -93,7 +93,7 @@ When Agent QA starts any local dev server, preview server, test server, or brows
 Required cleanup steps before final response or handoff:
 - Stop the server/process that Agent QA started, preferring graceful termination first.
 - Verify no orphan dev server, Playwright, browser, or project-scoped Node process remains from the QA run.
-- If Agent QA reused a pre-existing shared server, do **not** kill it unless Arief explicitly approves; instead state that it was reused and left running.
+- If Agent QA reused a pre-existing shared server, do **not** kill it unless the human owner explicitly approves; instead state that it was reused and left running.
 - If process ownership cannot be determined safely, report the blocker instead of killing unrelated user/system processes.
 
 This prevents repeated QA runs from leaving stale servers that can exhaust memory.
