@@ -175,6 +175,7 @@ Each open question must include:
 
 ## Rules
 
+- If a label required for a transition is not available in the repository (not created yet), create it manually first — e.g. `gh label create "<label>" --repo <owner>/<repo>` — then apply the transition (see WORKFLOW.md "Label rules"). Do not skip the transition because the label is missing.
 - Do not start development-level details (implementation approach, tech stack choices). Keep it product-level.
 - Before planning an issue, read the full issue body and all existing comments on the issue. Treat comments as part of the product context, including human clarifications, prior agent notes, blockers, approval decisions, and attached evidence.
 - Preserve all existing attachments, screenshots, images, videos, logs, and linked evidence in the issue body. Never remove, replace, or rewrite attachments unless the human explicitly asks for that specific attachment to be removed.

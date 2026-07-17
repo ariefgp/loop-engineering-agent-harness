@@ -15,6 +15,7 @@ feedback          → [Agent Dev] → in progress → qa ready | need confirmati
 ## Label rules
 
 - A task must have exactly ONE state label at any time.
+- If a required label is not available in the repository (not created yet), create it manually before applying it — e.g. `gh label create "<label>" --repo <owner>/<repo> --description "<state description>"` — then proceed with the normal transition. Never skip a label transition, fail silently, or leave an issue in the wrong state because a label is missing.
 - When adding a new state label, ALWAYS remove the previous state label in the same action.
 - Never leave a task with zero state labels or two state labels.
 - If work becomes blocked or needs human clarification/confirmation, do not leave the task `in progress` or `qa in progress`. Remove the active in-progress label and add `need confirmation` in the same action, then document the blocker clearly in the related channel and GitHub issue comment.
@@ -97,7 +98,7 @@ The prompt instructs Claude Code to:
 | --------- | ------ | -------------------------------------------- |
 | Agent PM  | opus   | Deep reasoning for specs, edge cases, deps  |
 | Agent Dev | sonnet | Fast, capable implementation and git work   |
-| Agent QA  | sonnet | Fast code review, testing, and bug reporting |
+| Agent QA  | opus   | Deep code review, testing, and bug reporting |
 
 ### Cron wrapper architecture
 

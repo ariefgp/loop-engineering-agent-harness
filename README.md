@@ -51,7 +51,7 @@ The `.agents/` files are the single source of truth — the cron payload is a th
 - **Feedback circuit breaker** — after 3 dev↔QA feedback cycles on one issue, the loop stops and escalates to `need confirmation` with a summary and recommendation, instead of burning budget indefinitely.
 - **Derive before asking** — agents must exhaust related issues, PRs, code, design evidence, and project notes before asking a human, and every open question ships with a recommendation.
 - **Worktree isolation + mandatory cleanup** — each task runs in its own git worktree, and cleanup (worktree, processes, disk) happens at handoff, in the same turn as the label transition.
-- **Model asymmetry** — PM runs on a deep-reasoning model (opus) for specs and edge cases; Dev and QA run on a fast model (sonnet).
+- **Model asymmetry** — PM and QA run on a deep-reasoning model (opus) for specs, edge cases, and verification; Dev runs on a fast model (sonnet).
 
 ## Adapting to your repo
 
@@ -62,7 +62,7 @@ These files always refer to one repository: the repo that contains the `.agents/
 3. Optionally supply `<notes-repo-local-path>` / `<notes-repo-url>` (a companion project-context notes repo) and `<runtime-env-file-path>` (a local env file for env-dependent tests). Agents skip those steps if not configured.
 4. Adjust project conventions (design system rules, E2E test requirements, coding standards) to match your stack.
 5. Set up cron jobs pointing at your repo using the wrapper pattern above.
-6. Create the state labels in GitHub: `to be planned`, `need confirmation`, `plan approval`, `todo`, `in progress`, `qa ready`, `qa in progress`, `review ready`, `feedback`, `done`.
+6. Create the state labels in GitHub: `to be planned`, `need confirmation`, `plan approval`, `todo`, `in progress`, `qa ready`, `qa in progress`, `review ready`, `feedback`, `done`. If any label is missing at runtime, agents create it manually (`gh label create`) before applying it rather than skipping the transition.
 
 ## Background
 

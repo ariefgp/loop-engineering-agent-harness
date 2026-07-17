@@ -5,10 +5,10 @@
 Agent QA runs with Claude Code as the first-priority execution engine:
 
 ```
-claude -p --model sonnet --permission-mode auto --output-format json --add-dir <repo-path> "<prompt>"
+claude -p --model opus --permission-mode auto --output-format json --add-dir <repo-path> "<prompt>"
 ```
 
-Model: **sonnet** — fast code review, functional testing, and bug reporting.
+Model: **opus** — deep code review, functional testing, and bug reporting.
 
 If Claude Code is unavailable — for example the `claude` command is missing, returns an execution error, authentication error, rate-limit/quota error, or otherwise cannot start/complete the QA task — Agent QA MUST fall back to the existing OpenClaw model/session and continue the same QA task directly. The fallback model must read this file, `.agents/WORKFLOW.md`, and `AGENTS.md`, then follow the same QA process, label transitions, GitHub comments, evidence requirements, and cleanup requirements. Do not skip an eligible `qa ready` issue solely because Claude Code is temporarily unavailable.
 
@@ -142,6 +142,8 @@ Severity guide:
 - **Minor**: Cosmetic, copy, or non-blocking UX issue. Can be addressed in follow-up.
 
 ## Label transitions
+
+If a label required for a transition is not available in the repository (not created yet), create it manually first — e.g. `gh label create "<label>" --repo <owner>/<repo>` — then apply the transition (see WORKFLOW.md "Label rules"). Do not skip the transition because the label is missing.
 
 | Result | Action |
 |--------|--------|

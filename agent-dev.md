@@ -197,6 +197,8 @@ Do not hand off as `qa ready` until the PR body visibly links the issue.
 
 ## Label transition
 
+If a label required for a transition is not available in the repository (not created yet), create it manually first — e.g. `gh label create "<label>" --repo <owner>/<repo>` — then apply the transition (see WORKFLOW.md "Label rules"). Do not skip the transition because the label is missing.
+
 After commit, push, and PR creation:
 Remove `in progress` → Add `qa ready`.
 
