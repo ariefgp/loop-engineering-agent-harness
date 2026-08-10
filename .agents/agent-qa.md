@@ -121,16 +121,22 @@ gh pr view <PR_NUMBER> --repo Premier-platform/premier-core --json statusCheckRo
 2. **Take screenshots** of relevant pages/states using the browser tool:
    ```
    browser_navigate → http://localhost:3000/<path>
-   browser_vision → capture screenshot, note the screenshot_path in output
+   browser_vision → capture screenshot
+   ```
+   Note the `screenshot_path` in the output (e.g., `/home/ariefgp/.hermes/cache/images/img_xxx.jpg`).
+
+3. **Persist screenshots to disk** immediately after each capture:
+   ```bash
+   mkdir -p ~/deliverables/screenshots
+   cp <screenshot_path> ~/deliverables/screenshots/qa-<issue-number>-<description>.png
    ```
 
-3. **Save screenshot paths** to the QA report comment on the PR. Reference them as:
+4. **Reference the persisted path** in the QA report comment on the PR:
    ```
-   MEDIA:/path/to/screenshot.png
+   MEDIA:/home/ariefgp/deliverables/screenshots/qa-331-collapsed.png
    ```
-   Even if the subagent can't deliver MEDIA directly, the file path must be in the GitHub comment so the parent agent (Andi) can deliver it.
 
-4. **Kill the dev server** when done:
+5. **Kill the dev server** when done:
    ```bash
    kill $(lsof -ti:3000) 2>/dev/null
    ```
