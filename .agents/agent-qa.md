@@ -121,10 +121,16 @@ gh pr view <PR_NUMBER> --repo Premier-platform/premier-core --json statusCheckRo
 2. **Take screenshots** of relevant pages/states using the browser tool:
    ```
    browser_navigate → http://localhost:3000/<path>
-   browser_vision → capture screenshot
+   browser_vision → capture screenshot, note the screenshot_path in output
    ```
 
-3. **Kill the dev server** when done:
+3. **Save screenshot paths** to the QA report comment on the PR. Reference them as:
+   ```
+   MEDIA:/path/to/screenshot.png
+   ```
+   Even if the subagent can't deliver MEDIA directly, the file path must be in the GitHub comment so the parent agent (Andi) can deliver it.
+
+4. **Kill the dev server** when done:
    ```bash
    kill $(lsof -ti:3000) 2>/dev/null
    ```
