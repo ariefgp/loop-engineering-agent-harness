@@ -75,28 +75,85 @@ Required before marking `review ready`:
 
 Do not pass QA based only on static screenshots, Storybook-only views, mocked fixture data, local-only fake data, or hardcoded page states unless the human owner explicitly approved that exception for the issue.
 
-### Visual/UI verification requirement
+### Vercel preview testing (when local env is unavailable)
 
-For visual, styling, layout, Figma-alignment, or user-facing UI behavior tasks, QA must verify the rendered UI, not only the code, CSS values, unit tests, typecheck, build, or lint output.
+**This repo has full integration env vars configured as GitHub secrets and Vercel project settings.** The following secrets are available in CI/Vercel:
 
-Required evidence before marking `review ready`:
-- Rendered browser screenshot or equivalent visual capture from the PR branch/staging/preview environment.
-- Explicit comparison against the design/reference or acceptance criteria, including relevant background colors, selected/active states, inactive states, text contrast, spacing, shape, icons, and state switching behavior.
-- Manual interaction evidence for UI states where applicable, such as tab switching, opening/closing modals, menus, drawers, loading/empty/error/restricted states, and repeated/rapid interactions.
+- `SUPABASE_SECRET_KEY`, `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `RESEND_API_KEY`, `NEXT_PUBLIC_MAPBOX_TOKEN`, `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_SENTRY_DSN`
+- `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`
 
-If rendered UI evidence cannot be captured or inspected, do **not** mark the issue `review ready`. Mark it `feedback` or blocked for visual verification, and state exactly which UI evidence is missing.
+Every PR automatically deploys to a **Vercel preview URL** with these env vars live. The preview URL follows the pattern:
+`https://premier-core-git-feat-<branch-slug>-<hash>-premier-portal-platform.vercel.app`
+
+Get the exact URL via:
+```bash
+gh pr view <PR_NUMBER> --repo Premier-platform/premier-core --json statusCheckRollup --jq '.statusCheckRollup[] | select(.name == "Vercel") | .targetUrl'
+```
+
+**When local `.env.local` is missing or `hasSupabase` is false:**
+
+1. **Do NOT report "no runtime env" as a blocker.** The env exists on the Vercel preview.
+2. **Test against the Vercel preview URL** instead of local dev server. The preview has real Supabase, real DB, real seeded data.
+3. If the preview is protected by Vercel Deployment Protection (SSO redirect), use the PR's Playwright E2E tests which run in CI with full env injected:
+   ```bash
+   # CI E2E runs automatically on PR via GitHub Actions
+   gh run list --repo Premier-platform/premier-core --branch <branch-name> --limit 3
+   gh run view <run-id> --repo Premier-platform/premier-core --log | grep -A5 "playwright\|e2e"
+   ```
+4. If CI E2E passes for the PR branch, that counts as real-data verification (CI runs with `SUPABASE_SECRET_KEY` + dev-auth enabled).
+5. Only mark `need confirmation` for env reasons if BOTH the Vercel preview AND CI E2E are inaccessible. This should be extremely rare.
+
+**Key point:** The Vercel preview deploys with the same migration + seed pipeline as production. If `prebuild` runs migrations and the preview is "Ready," the schema is live and testable. Do not assume "no local env = no real data."
+
+## Screenshot requirement (mandatory for ALL QA runs)
+
+**Every QA run must include screenshots**, regardless of whether the task is visual/UI-related. This provides visual evidence that the feature was tested against real rendered output.
+
+### Workflow
+
+1. **Start local dev server** on the VPS:
+   ```bash
+   cd <repo-path> && npm run dev &
+   sleep 5  # wait for server to start
+   ```
+
+2. **Take screenshots** of relevant pages/states using the browser tool:
+   ```
+   browser_navigate → http://localhost:3000/<path>
+   browser_vision → capture screenshot
+   ```
+
+3. **Kill the dev server** when done:
+   ```bash
+   kill $(lsof -ti:3000) 2>/dev/null
+   ```
+
+### Screenshot evidence checklist
+
+For every QA run, capture at minimum:
+- [ ] The primary page/flow being tested
+- [ ] Any modal/drawer/dialog interactions
+- [ ] Error/empty/loading states if applicable
+- [ ] Form submissions or action confirmations
+- [ ] Mobile/responsive view if the task touches layout
+
+Include screenshots in the QA report as MEDIA: paths or attach to the PR comment. If a screenshot cannot be captured (e.g., pure backend change with no UI), state why in the QA notes.
+
+## Visual/UI verification requirement (additional for UI tasks)
 
 ### Playwright/dev server cleanup requirement
 
-When Agent QA starts any local dev server, preview server, test server, or browser process for Playwright QA, Agent QA MUST stop it before finishing the run. This includes `npm`/`pnpm`/`yarn dev`, Vite, Next.js, preview/serve commands, Playwright browsers, and any child process started only for the QA run.
+When any agent (Dev or QA) starts any local dev server, preview server, test server, or browser process for Playwright QA or development, the agent MUST stop it before finishing the run AND before transitioning the issue out of their active state label (`in progress` → `qa ready`, or `qa in progress` → `review ready`/`feedback`). This includes `npm`/`pnpm`/`yarn dev`, Vite, Next.js, preview/serve commands, Playwright browsers, and any child process started only for the run.
 
-Required cleanup steps before final response or handoff:
-- Stop the server/process that Agent QA started, preferring graceful termination first.
-- Verify no orphan dev server, Playwright, browser, or project-scoped Node process remains from the QA run.
-- If Agent QA reused a pre-existing shared server, do **not** kill it unless the human owner explicitly approves; instead state that it was reused and left running.
+Required cleanup steps before label transition or final response:
+- Stop the server/process that the agent started, preferring graceful termination first.
+- **Remove any worktree** created for the issue if the issue is no longer in an active state (`in progress` or `qa in progress`). Worktrees for issues that moved to `qa ready`, `review ready`, `feedback`, or `need confirmation` should be removed — the next agent who picks it up will create their own.
+- Verify no orphan dev server, Playwright, browser, or project-scoped Node process remains from the run.
+- If the agent reused a pre-existing shared server, do **not** kill it unless the human owner explicitly approves; instead state that it was reused and left running.
 - If process ownership cannot be determined safely, report the blocker instead of killing unrelated user/system processes.
 
-This prevents repeated QA runs from leaving stale servers that can exhaust memory.
+A **workspace cleanup cron** (`~/.hermes/scripts/workspace-cleanup.sh`) runs every 10 minutes and automatically removes worktrees whose issues are no longer `in progress` or `qa in progress`. Agents should clean up proactively, but the cron is a safety net.
 
 ### 3. Regression check
 
@@ -113,7 +170,7 @@ For every QA review, write a clear "How QA/Test was performed" section in the PR
 - **Manual test steps**: numbered steps detailed enough that another QA/dev can reproduce the same verification.
 - **Expected vs actual result**: concise result for each acceptance criterion and notable edge/negative case.
 - **Regression coverage**: adjacent flows or shared components checked.
-- **Evidence**: screenshots, recordings, logs, test output, or notes explaining why evidence is unavailable.
+- **Evidence**: screenshots (mandatory — see screenshot requirement above), recordings, logs, test output, or notes explaining why evidence is unavailable.
 - **Skipped or blocked tests**: what was not tested, why, and the release risk.
 
 Do not mark QA as passed if Critical/Major flows are untested or blocked.

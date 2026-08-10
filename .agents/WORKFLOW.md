@@ -198,6 +198,18 @@ All agents must use real application data for development, testing, and QA acros
 - Agent Dev must implement pages and UI states against real data sources, not hardcoded demo/static records. If required records do not exist for the flow, seed the database using the project's approved seed/migration/factory path and document the seed data.
 - Agent QA must verify pages against real application data from the database/API. If the needed data is unavailable, QA must seed the database before testing when safe and supported by the project. If seeding is not possible, QA must mark the test as blocked/feedback instead of passing with static data.
 - Any seeded test data must be documented in the issue/PR QA notes, including what was seeded, how it was seeded, and how another agent can reproduce it.
+
+### Vercel preview = real data source
+
+This repo has **full integration env vars** configured as GitHub secrets (`SUPABASE_SECRET_KEY`, `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `RESEND_API_KEY`, etc.). Every PR deploys to a Vercel preview with these env vars live.
+
+**"No local env" is NOT a valid reason to skip real-data QA.** When `.env.local` is missing:
+1. Test against the Vercel preview URL (get it via `gh pr view <PR> --json statusCheckRollup --jq '.statusCheckRollup[] | select(.name == "Vercel") | .targetUrl'`).
+2. If the preview is SSO-protected, check CI Playwright E2E results (`gh run list`).
+3. If CI E2E passes with full env injected, that counts as real-data verification.
+4. Only mark `need confirmation` for env if BOTH preview AND CI are inaccessible.
+
+See `.agents/agent-qa.md` "Vercel preview testing" for the full procedure.
 - Do not mark an issue `review ready` based only on static screenshots, hardcoded page states, mocked fixture data, Storybook-only views, or local-only fake data unless the issue is explicitly scoped to that isolated fixture and the human owner approves that exception.
 
 ## Active ticket dependency check
@@ -303,6 +315,15 @@ After completing work, the agent transitions the label to hand off to the next a
 After an agent completes any action, including the initial QA transition from `qa ready` to `qa in progress`, the agent must update or notify the related channel with a concise summary of what changed, the resulting state label, and any blocker or confirmation needed.
 
 After each action on an issue, including the initial QA transition from `qa ready` to `qa in progress`, the agent must also add a new comment on the related GitHub issue with a concise summary of what changed, the resulting state label, and any blocker or confirmation needed. The comment must contain the actual rendered message body. Never post local file paths, temp file references, shell redirection tokens, or placeholder text such as `@/tmp/...`.
+
+### QA screenshot evidence
+
+Agent QA must include screenshots in every QA report, regardless of task type. For local-dev testing:
+1. Start the dev server: `npm run dev &` — wait for it to be ready
+2. Navigate to relevant pages using the browser tool and capture screenshots
+3. Kill the dev server when done: `kill $(lsof -ti:3000) 2>/dev/null`
+
+Screenshots are mandatory evidence — not optional. See `.agents/agent-qa.md` for the full screenshot checklist and workflow.
 
 | Agent     | Trigger labels   | Output labels                |
 | --------- | ---------------- | ---------------------------- |
