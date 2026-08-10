@@ -108,51 +108,54 @@ gh pr view <PR_NUMBER> --repo Premier-platform/premier-core --json statusCheckRo
 
 ## Screenshot requirement (mandatory for ALL QA runs)
 
-**Every QA run must include screenshots**, regardless of whether the task is visual/UI-related. This provides visual evidence that the feature was tested against real rendered output.
+**Every QA run must include screenshots.** This applies to all task types.
 
 ### Workflow
 
-1. **Start local dev server** on the VPS:
+1. **Start local dev server:**
    ```bash
    cd <repo-path> && npm run dev &
-   sleep 5  # wait for server to start
+   sleep 5
    ```
 
-2. **Take screenshots** of relevant pages/states using the browser tool:
+2. **Take screenshots** using the browser tool:
    ```
    browser_navigate → http://localhost:3000/<path>
    browser_vision → capture screenshot
    ```
    Note the `screenshot_path` in the output (e.g., `/home/ariefgp/.hermes/cache/images/img_xxx.jpg`).
 
-3. **Persist screenshots to disk** immediately after each capture:
+3. **Persist to disk** immediately after each capture:
    ```bash
    mkdir -p ~/deliverables/screenshots
-   cp <screenshot_path> ~/deliverables/screenshots/qa-<issue-number>-<description>.png
+   cp <screenshot_path> ~/deliverables/screenshots/qa-<issue>-<state>.png
    ```
 
-4. **Reference the persisted path** in the QA report comment on the PR:
-   ```
-   MEDIA:/home/ariefgp/deliverables/screenshots/qa-331-collapsed.png
-   ```
+4. **Reference the file path** in the QA report comment on the PR. The parent agent (Andi) delivers screenshots via Telegram.
 
 5. **Kill the dev server** when done:
    ```bash
    kill $(lsof -ti:3000) 2>/dev/null
    ```
 
-### Screenshot evidence checklist
-
-For every QA run, capture at minimum:
-- [ ] The primary page/flow being tested
+### Screenshot checklist
+- [ ] Primary page/flow being tested
 - [ ] Any modal/drawer/dialog interactions
 - [ ] Error/empty/loading states if applicable
 - [ ] Form submissions or action confirmations
-- [ ] Mobile/responsive view if the task touches layout
 
-Include screenshots in the QA report as MEDIA: paths or attach to the PR comment. If a screenshot cannot be captured (e.g., pure backend change with no UI), state why in the QA notes.
+If a screenshot cannot be captured (pure backend change), state why in the QA notes.
 
-## Visual/UI verification requirement (additional for UI tasks)
+### Visual/UI verification requirement (additional for UI tasks)
+
+For visual, styling, layout, Figma-alignment, or user-facing UI behavior tasks, QA must verify the rendered UI, not only the code, CSS values, unit tests, typecheck, build, or lint output.
+
+Required evidence before marking `review ready`:
+- Rendered browser screenshot or equivalent visual capture from the PR branch/staging/preview environment.
+- Explicit comparison against the design/reference or acceptance criteria, including relevant background colors, selected/active states, inactive states, text contrast, spacing, shape, icons, and state switching behavior.
+- Manual interaction evidence for UI states where applicable, such as tab switching, opening/closing modals, menus, drawers, loading/empty/error/restricted states, and repeated/rapid interactions.
+
+If rendered UI evidence cannot be captured or inspected, do **not** mark the issue `review ready`. Mark it `feedback` or blocked for visual verification, and state exactly which UI evidence is missing.
 
 ### Playwright/dev server cleanup requirement
 
