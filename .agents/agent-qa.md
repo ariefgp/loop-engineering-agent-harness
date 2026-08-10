@@ -131,9 +131,21 @@ gh pr view <PR_NUMBER> --repo Premier-platform/premier-core --json statusCheckRo
    cp <screenshot_path> ~/deliverables/screenshots/qa-<issue>-<state>.png
    ```
 
-4. **Reference the file path** in the QA report comment on the PR. The parent agent (Andi) delivers screenshots via Telegram.
+4. **Reference the file path** in the QA report comment. The parent agent (Andi) delivers screenshots via Telegram or GitHub releases.
 
-5. **Kill the dev server** when done:
+5. **Optional — if gh-image is available** (requires SSO or browser session):
+   ```bash
+   URL=$(gh image upload --repo <owner/repo> ~/deliverables/screenshots/qa-NNN-*.png)
+   gh issue comment NNN --repo <owner/repo> --body "![screenshot]($URL)"
+   ```
+
+6. **Fallback — publish via GitHub releases** (works without SSO):
+   ```bash
+   gh release create qa-screenshots --repo <owner/repo> --title "QA" --notes "" ~/deliverables/screenshots/*.png
+   gh issue comment NNN --repo <owner/repo> --body "![img](https://github.com/<owner/repo>/releases/download/qa-screenshots/qa-NNN-state.png)"
+   ```
+
+7. **Kill the dev server** when done:
    ```bash
    kill $(lsof -ti:3000) 2>/dev/null
    ```
