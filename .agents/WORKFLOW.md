@@ -60,6 +60,24 @@ Staleness rule: a claim is **stale** when the claiming agent has produced no new
 - Stale claim, or an `in progress` / `qa in progress` issue with no claim comment at all → the issue is resumable. The resuming agent posts its own claim comment before continuing work.
 - Any label transition out of `in progress` / `qa in progress` releases the claim — the new state label supersedes it.
 
+## Two developer agents (McGee + Torres)
+
+Premier Core runs **two** dev agents in parallel on the `todo`/`feedback` queue:
+
+- **McGee** — `agent-dev.md`, claim format `CLAIMED by Agent Dev …`.
+- **Torres** — `agent-dev-torres.md`, claim format `CLAIMED by Agent Dev Torres …`.
+
+Rules:
+
+1. **Distinct claim identity is the ownership signal.** The agent named in the claim comment owns the issue. `CLAIMED by Agent Dev` = McGee; `CLAIMED by Agent Dev Torres` = Torres.
+2. **Never work the same issue simultaneously.** Before claiming a `todo`/`feedback` issue, each dev reads its comments. A fresh claim from the *other* dev means skip it and pick another.
+3. **Resume-your-own before starting new.** Each dev first checks for its own unfinished `in progress` issues (fresh own claim, or unclaimed/stale) and resumes those before picking new work. A fresh claim from the *other* dev is not the current dev's blocker.
+4. **Worktree isolation.** Each dev creates its own `git worktree` with a unique path (Torres prefixes `torres-`) and unique branch name. They must never share a worktree or checkout the same branch.
+5. **One PR per issue.** If the other dev already has an open PR for an issue, do not open a competing PR — skip it unless the issue is stale/unclaimed.
+6. **Process isolation.** Two devs may each run their own dev server/test process; they must not reuse or kill each other's processes without cause (see the process-level one-task guard).
+
+The dispatcher sends up to two `dev` issues per tick: the highest-priority one to McGee, the second to Torres.
+
 ## Feedback cycle limit (circuit breaker)
 
 The dev↔QA loop must not ping-pong indefinitely on the same issue. A "feedback cycle" is one round trip: QA transitions the issue to `feedback` and Dev returns it to `qa ready`.
