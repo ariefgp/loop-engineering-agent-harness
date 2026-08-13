@@ -78,6 +78,23 @@ Rules:
 
 The dispatcher sends up to two `dev` issues per tick: the highest-priority one to McGee, the second to Torres.
 
+## Two QA agents (Jimmy + Ducky)
+
+Premier Core runs **two** QA agents in parallel on the `qa ready` queue:
+
+- **Jimmy** — `agent-qa.md`, claim format `CLAIMED by Agent QA …`.
+- **Ducky** — `agent-qa-ducky.md`, claim format `CLAIMED by Agent QA Ducky …`.
+
+Rules (mirror the two-dev rules):
+
+1. **Distinct claim identity is the ownership signal.** `CLAIMED by Agent QA` = Jimmy; `CLAIMED by Agent QA Ducky` = Ducky.
+2. **Never QA the same issue simultaneously.** Read the issue comments before claiming; a fresh claim from the *other* QA means skip and pick another.
+3. **Resume-your-own before starting new.** Each QA first resumes its own unfinished `qa in progress` issues (fresh own claim, or unclaimed/stale). A fresh claim from the *other* QA is not the current QA's blocker.
+4. **One QA report per PR.** If the other QA already has an open review on a PR, do not open a competing review — skip unless stale/unclaimed.
+5. **Worktree + process isolation.** Each QA creates its own worktree (Ducky prefixes `ducky-`) and must not reuse or kill the other's dev server/processes.
+
+The dispatcher sends up to two `qa` issues per tick: the highest-priority one to Jimmy, the second to Ducky.
+
 ## Feedback cycle limit (circuit breaker)
 
 The dev↔QA loop must not ping-pong indefinitely on the same issue. A "feedback cycle" is one round trip: QA transitions the issue to `feedback` and Dev returns it to `qa ready`.
