@@ -43,11 +43,12 @@ DEV2_MODEL="sonnet"
 QA_MODEL="opus"
 QA2_MODEL="opus"
 
-# Resource guard: each agent may start a 1.2-2 GB Next.js build/dev server.
-# Four simultaneous agents can exhaust this 8 GB VPS once Hermes, Docker,
-# Playwright, and the OS are included. Keep at most two agent processes live;
-# larger batches run in waves while the dispatcher lock remains held.
-MAX_CONCURRENT_AGENTS=2
+# Resource guard: each agent may start multiple Next.js/Playwright processes
+# consuming several GB together. Even two simultaneous agents pushed this
+# 8 GB VPS to 6.6 GiB RAM + 1.7 GiB swap. Keep exactly one engineering agent
+# live at a time; larger batches run sequentially while the dispatcher lock
+# remains held.
+MAX_CONCURRENT_AGENTS=1
 
 # ============================================================
 # HELPERS
@@ -301,8 +302,8 @@ SCAN_TIME=$(date +%H:%M)
 echo "# Loop Engineering — scan ${SCAN_TIME} WIB"
 
 # Dispatch up to: 1 PM, 2 Dev (McGee + Torres), 2 QA (Jimmy + Ducky) per tick.
-# Jobs run in waves capped by MAX_CONCURRENT_AGENTS. This preserves the full
-# roster without allowing four simultaneous Next.js builds to exhaust RAM.
+# Jobs run sequentially under MAX_CONCURRENT_AGENTS=1. This preserves the full
+# roster without allowing overlapping Next.js/Playwright workloads to exhaust RAM.
 
 declare -A DISPATCHED=()  # role -> count
 declare -i DEV_COUNT=0
