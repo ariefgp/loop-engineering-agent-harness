@@ -356,7 +356,10 @@ After each action on an issue, including the initial QA transition from `qa read
 Agent QA must include screenshots in every QA report, regardless of task type. For local-dev testing:
 1. Start the dev server: `npm run dev &` — wait for it to be ready
 2. Navigate to relevant pages using the browser tool and capture screenshots
-3. Kill the dev server when done: `kill $(lsof -ti:3000) 2>/dev/null`
+3. Upload every screenshot to the issue/PR as an inline-rendered GitHub image and visually verify that it renders in the comment
+4. Reject local paths, bare URLs, ordinary links, and download-only release assets as QA evidence
+5. If inline upload is blocked, move to `need confirmation` rather than `review ready`
+6. Kill the dev server when done: `kill $(lsof -ti:3000) 2>/dev/null`
 
 Screenshots are mandatory evidence — not optional. See `.agents/agent-qa.md` for the full screenshot checklist and workflow.
 

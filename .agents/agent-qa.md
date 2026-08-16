@@ -131,19 +131,14 @@ gh pr view <PR_NUMBER> --repo Premier-platform/premier-core --json statusCheckRo
    cp <screenshot_path> ~/deliverables/screenshots/qa-<issue>-<state>.png
    ```
 
-4. **Reference the file path** in the QA report comment. The parent agent (Andi) delivers screenshots via Telegram or GitHub releases.
-
-5. **Optional — if gh-image is available** (requires SSO or browser session):
+4. **Upload every screenshot as an inline-rendered GitHub image before posting the QA result.** Use a native GitHub `user-attachments` upload through `gh-image` or an authenticated browser/comment-composer upload:
    ```bash
    URL=$(gh image upload --repo <owner/repo> ~/deliverables/screenshots/qa-NNN-*.png)
    gh issue comment NNN --repo <owner/repo> --body "![screenshot]($URL)"
    ```
+5. **Verify the posted GitHub comment renders each image inline.** A local path, bare URL, ordinary hyperlink, release-download link, or image that must be downloaded does **not** satisfy the requirement. Do not describe a release asset as a GitHub attachment.
 
-6. **Fallback — publish via GitHub releases** (works without SSO):
-   ```bash
-   gh release create qa-screenshots --repo <owner/repo> --title "QA" --notes "" ~/deliverables/screenshots/*.png
-   gh issue comment NNN --repo <owner/repo> --body "![img](https://github.com/<owner/repo>/releases/download/qa-screenshots/qa-NNN-state.png)"
-   ```
+6. **If native inline upload is blocked** by SSO, authentication, permissions, or tooling, do not mark the issue `review ready`. Keep the persisted files, report the exact blocker, and move to `need confirmation` so a human/authorized session can upload them. GitHub release assets are not an accepted fallback unless the final issue/PR comment has been visually verified to render them inline.
 
 7. **Kill the dev server** when done:
    ```bash
@@ -155,6 +150,8 @@ gh pr view <PR_NUMBER> --repo Premier-platform/premier-core --json statusCheckRo
 - [ ] Any modal/drawer/dialog interactions
 - [ ] Error/empty/loading states if applicable
 - [ ] Form submissions or action confirmations
+- [ ] Every screenshot is uploaded to the issue/PR and visibly renders inline
+- [ ] No screenshot is represented only by a local path, bare URL, or download link
 
 If a screenshot cannot be captured (pure backend change), state why in the QA notes.
 
