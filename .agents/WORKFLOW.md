@@ -74,13 +74,13 @@ Rules:
 3. **Resume-your-own before starting new.** Each dev first checks for its own unfinished `in progress` issues (fresh own claim, or unclaimed/stale) and resumes those before picking new work. A fresh claim from the *other* dev is not the current dev's blocker.
 4. **Worktree isolation.** Each dev creates its own `git worktree` with a unique path (Torres prefixes `torres-`) and unique branch name. They must never share a worktree or checkout the same branch.
 5. **One PR per issue.** If the other dev already has an open PR for an issue, do not open a competing PR — skip it unless the issue is stale/unclaimed.
-6. **Process isolation.** Two devs may each run their own dev server/test process; they must not reuse or kill each other's processes without cause (see the process-level one-task guard).
+6. **Process isolation.** Devs may each own separate processes/worktrees, but the 8 GB host dispatcher runs engineering agents sequentially. An agent must not start while another engineering agent is active, and must not reuse or kill another agent's processes without cause (see the process-level one-task guard).
 
-The dispatcher sends up to two `dev` issues per tick: the highest-priority one to McGee, the second to Torres.
+The dispatcher may assign up to two `dev` issues per tick (McGee first, Torres second), but executes them sequentially under a global one-agent resource cap.
 
 ## Two QA agents (Jimmy + Ducky)
 
-Premier Core runs **two** QA agents in parallel on the `qa ready` queue:
+Premier Core has **two QA identities** for the `qa ready` queue, executed sequentially by the dispatcher:
 
 - **Jimmy** — `agent-qa.md`, claim format `CLAIMED by Agent QA …`.
 - **Ducky** — `agent-qa-ducky.md`, claim format `CLAIMED by Agent QA Ducky …`.
@@ -93,7 +93,7 @@ Rules (mirror the two-dev rules):
 4. **One QA report per PR.** If the other QA already has an open review on a PR, do not open a competing review — skip unless stale/unclaimed.
 5. **Worktree + process isolation.** Each QA creates its own worktree (Ducky prefixes `ducky-`) and must not reuse or kill the other's dev server/processes.
 
-The dispatcher sends up to two `qa` issues per tick: the highest-priority one to Jimmy, the second to Ducky.
+The dispatcher may assign up to two `qa` issues per tick (Jimmy first, Ducky second), but executes them sequentially under the same global one-agent resource cap.
 
 ## Feedback cycle limit (circuit breaker)
 

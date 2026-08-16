@@ -79,6 +79,8 @@ When processes exist:
 
 Agent Dev must clean up the temporary dev/test servers and child processes it started on success, failure, timeout, interruption, and restart recovery. A previous incident left multiple stale Agent Dev dev-server processes running after cron retries/stalls, causing OOM; do not repeat this.
 
+**8 GB VPS resource rule:** never run a manually started dev server concurrently with a Playwright command that manages its own `webServer`, with `next build`, or with another browser-test stack. Before starting Playwright or a build, stop the manual dev server first. A Playwright config may legitimately start its app and auth servers as one test stack, but no additional manual server may remain. Capture root PIDs when starting servers, install a cleanup trap where practical, and after every failed/timed-out/retried test command stop its full process tree before retrying. Verify by both process list and listening port; killing only the parent is insufficient when Next.js children have been re-parented.
+
 ## Startup checklist
 
 1. Pull the latest `main` before starting work: `git checkout main && git pull --ff-only origin main`.

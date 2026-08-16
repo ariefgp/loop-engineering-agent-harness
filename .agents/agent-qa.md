@@ -170,6 +170,8 @@ If rendered UI evidence cannot be captured or inspected, do **not** mark the iss
 
 When any agent (Dev or QA) starts any local dev server, preview server, test server, or browser process for Playwright QA or development, the agent MUST stop it before finishing the run AND before transitioning the issue out of their active state label (`in progress` → `qa ready`, or `qa in progress` → `review ready`/`feedback`). This includes `npm`/`pnpm`/`yarn dev`, Vite, Next.js, preview/serve commands, Playwright browsers, and any child process started only for the run.
 
+**8 GB VPS resource rule:** never keep a manually started dev server running while Playwright starts its configured `webServer` stack, while `next build` runs, or while another browser-test stack runs. Stop the manual server first. Playwright may start the app and auth servers required by one test run, but no third/manual server may coexist. Capture root PIDs, clean the full process tree after failure/timeout and before retrying, and verify both the process list and listening ports—Next.js children can survive after their original shell exits.
+
 Required cleanup steps before label transition or final response:
 - Stop the server/process that the agent started, preferring graceful termination first.
 - **Remove any worktree** created for the issue if the issue is no longer in an active state (`in progress` or `qa in progress`). Worktrees for issues that moved to `qa ready`, `review ready`, `feedback`, or `need confirmation` should be removed — the next agent who picks it up will create their own.
