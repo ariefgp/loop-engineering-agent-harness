@@ -25,7 +25,10 @@ from loop_harness.models import Candidate, Role, WorkspaceContext
 from loop_harness.runtime import FileLock, HeavyRunner, ResultStore, RuntimePaths
 from loop_harness.scheduler import Assignment, DEFAULT_WORKERS, WorkerSpec, run_concurrently
 from loop_harness.store import RunStore
-from loop_harness.worker import WorkerResult, WorkerRunner, build_task_prompt, linux_process_start
+from loop_harness.worker import (
+    WorkerResult, WorkerRunner, _profile_home_for_worker, build_task_prompt,
+    linux_process_start,
+)
 
 
 NOW = datetime(2026, 9, 13, 0, 0, tzinfo=UTC)
@@ -612,6 +615,19 @@ Path({outcome!r}).write_text('escaped' if escaped else 'blocked', encoding='asci
 
 
 class WorkerTests(unittest.TestCase):
+    def test_named_profile_write_scope_is_exact_and_rejects_traversal(self) -> None:
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            profile = home / ".hermes" / "profiles" / "jimmy"
+            sibling = home / ".hermes" / "profiles" / "ducky"
+            profile.mkdir(parents=True)
+            sibling.mkdir()
+            with patch.object(Path, "home", return_value=home):
+                self.assertEqual(profile.resolve(), _profile_home_for_worker("jimmy"))
+                self.assertIsNone(_profile_home_for_worker("mcgee"))
+                with self.assertRaisesRegex(RuntimeError, "profile name is invalid"):
+                    _profile_home_for_worker("../ducky")
+
     def test_prompt_examples_are_accepted_by_the_handoff_policy(self) -> None:
         for item in assignments():
             workspace = WorkspaceContext(

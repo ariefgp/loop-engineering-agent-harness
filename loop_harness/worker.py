@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,22 @@ _SAFE_ENVIRONMENT = {
     "XDG_CACHE_HOME",
     "NO_COLOR",
 }
+
+_PROFILE_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
+
+
+def _profile_home_for_worker(profile: str) -> Path | None:
+    """Return the one named profile island that Hermes must persist into."""
+    if _PROFILE_NAME.fullmatch(profile) is None:
+        raise RuntimeError("worker profile name is invalid")
+    profiles_root = (Path.home() / ".hermes" / "profiles").resolve()
+    candidate = profiles_root / profile
+    if not candidate.exists():
+        return None
+    resolved = candidate.resolve(strict=True)
+    if resolved.parent != profiles_root or not resolved.is_dir():
+        raise RuntimeError("worker profile home is invalid")
+    return resolved
 
 
 def _worker_environment(paths: RuntimePaths) -> dict[str, str]:
@@ -437,6 +454,10 @@ class WorkerRunner:
                     ]
                     if assignment.workspace is not None:
                         allowed_roots.append(assignment.workspace.git_dir.resolve())
+                    profile_home = _profile_home_for_worker(assignment.worker.profile)
+                    if profile_home is not None:
+                        # Named profiles persist only inside their own isolation island.
+                        allowed_roots.append(profile_home)
                     supervisor_argv = [
                         sys.executable,
                         str(Path(__file__).with_name("group_supervisor.py")),

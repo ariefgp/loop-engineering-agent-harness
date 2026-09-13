@@ -130,6 +130,13 @@ class StoreTests(unittest.TestCase):
             writer.execute("PRAGMA journal_mode=WAL")
             writer.execute("PRAGMA wal_autocheckpoint=0")
             self.assertTrue(store.reserve(assignment(), "active", NOW))
+            # Keep a committed WAL frame and shared-memory index live while the
+            # read-only store opens; otherwise the prior writer may checkpoint and
+            # remove both sidecars before this test takes its baseline.
+            writer.execute(
+                "INSERT OR REPLACE INTO metadata(key, value) VALUES ('wal-probe', '1')"
+            )
+            writer.commit()
             before = {item.name: item.stat().st_mtime_ns for item in root.iterdir()}
 
             from unittest.mock import patch

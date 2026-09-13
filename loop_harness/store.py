@@ -14,6 +14,16 @@ _ACTIVE = ("prepared", "running")
 _STALE_AFTER = timedelta(minutes=45)
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Commit/rollback like sqlite3.Connection, then deterministically close."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 class RunStore:
     def __init__(self, path: Path, *, read_only: bool = False) -> None:
         self.path = path
@@ -39,9 +49,12 @@ class RunStore:
                 timeout=10,
                 isolation_level=None,
                 uri=True,
+                factory=_ClosingConnection,
             )
         else:
-            connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+            connection = sqlite3.connect(
+                self.path, timeout=10, isolation_level=None, factory=_ClosingConnection
+            )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout=10000")
         if self.read_only:
