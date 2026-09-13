@@ -80,13 +80,30 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 def _screenshot_request(url: str) -> tuple[int, str | None, str | None, bytes]:
+    headers = {
+        "User-Agent": "loop-engineering-screenshot-verifier/1",
+        "Range": "bytes=0-31",
+        "Accept": "image/png,image/jpeg,image/webp,image/gif",
+    }
+    # Private-repository user attachments return 404 anonymously. Authenticate
+    # only the initial github.com request; never forward the token to signed
+    # object-storage redirects.
+    if urlsplit(url).hostname == "github.com":
+        token_result = subprocess.run(
+            ["gh", "auth", "token", "--hostname", "github.com"],
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+            env=_github_environment(),
+        )
+        token = token_result.stdout.strip()
+        if token_result.returncode != 0 or not token:
+            return 401, None, None, b""
+        headers["Authorization"] = f"Bearer {token}"
     request = Request(
         url,
-        headers={
-            "User-Agent": "loop-engineering-screenshot-verifier/1",
-            "Range": "bytes=0-31",
-            "Accept": "image/png,image/jpeg,image/webp,image/gif",
-        },
+        headers=headers,
         method="GET",
     )
     try:
@@ -106,7 +123,13 @@ def _allowed_screenshot_redirect(url: str) -> bool:
         return False
     return bool(
         parsed.scheme == "https"
-        and parsed.hostname in _SCREENSHOT_DELIVERY_HOSTS
+        and (
+            parsed.hostname in _SCREENSHOT_DELIVERY_HOSTS
+            or re.fullmatch(
+                r"github-production-user-asset-[a-z0-9-]+\.s3\.amazonaws\.com",
+                parsed.hostname or "",
+            ) is not None
+        )
         and parsed.username is None and parsed.password is None and parsed.port is None
     )
 

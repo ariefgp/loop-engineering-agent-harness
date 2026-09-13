@@ -797,6 +797,10 @@ class GitHubClientTests(unittest.TestCase):
     def test_default_screenshot_checker_validates_redirect_host_content_type_and_magic(self) -> None:
         attachment = "https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc"
         delivery = "https://private-user-images.githubusercontent.com/1/image.png"
+        private_delivery = (
+            "https://github-production-user-asset-6210df.s3.amazonaws.com/"
+            "123/image.png?X-Amz-Signature=example"
+        )
 
         def valid(url: str) -> tuple[int, str | None, str | None, bytes]:
             if url == attachment:
@@ -805,6 +809,14 @@ class GitHubClientTests(unittest.TestCase):
             return 206, None, "image/png", b"\x89PNG\r\n\x1a\nrest"
 
         self.assertTrue(_screenshot_url_reachable(attachment, request=valid))
+
+        def valid_private(url: str) -> tuple[int, str | None, str | None, bytes]:
+            if url == attachment:
+                return 302, private_delivery, None, b""
+            self.assertEqual(private_delivery, url)
+            return 206, None, "image/png", b"\x89PNG\r\n\x1a\nrest"
+
+        self.assertTrue(_screenshot_url_reachable(attachment, request=valid_private))
 
         invalid = (
             ("https://attacker.invalid/captured.png", "image/png", b"\x89PNG\r\n\x1a\n"),
