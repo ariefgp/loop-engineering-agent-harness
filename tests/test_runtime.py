@@ -9,11 +9,14 @@ import sys
 import threading
 import time
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from loop_harness.containment import CgroupScope, _current_cgroup
+from loop_harness.group_supervisor import _cleanup_cgroup
 from loop_harness.models import Candidate, Role
 from loop_harness.runtime import FileLock, HeavyRunner, ResultStore, RuntimePaths
 from loop_harness.scheduler import Assignment, DEFAULT_WORKERS, WorkerSpec, run_concurrently
@@ -45,6 +48,10 @@ def assignments() -> list[Assignment]:
     return result
 
 
+def candidate_at(path: Path) -> Candidate:
+    return replace(assignments()[1].candidate, repo_path=path)
+
+
 def process_is_running(pid: int) -> bool:
     try:
         stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
@@ -56,15 +63,76 @@ def process_is_running(pid: int) -> bool:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_guardian_retries_cleanup_before_returning(self) -> None:
+        with patch("loop_harness.group_supervisor._move"), patch(
+            "loop_harness.group_supervisor.CgroupScope.cleanup",
+            side_effect=[RuntimeError("retry"), None],
+        ) as cleanup, patch("loop_harness.group_supervisor.time.sleep"):
+            _cleanup_cgroup(Path("/scope"), Path("/parent"))
+        self.assertEqual(2, cleanup.call_count)
+
+    def test_cgroup_cleanup_removes_nested_owned_hierarchy(self) -> None:
+        scope = CgroupScope.create("nested-test")
+        nested = scope.path / "child" / "grandchild"
+        nested.mkdir(parents=True)
+        scope.cleanup()
+        self.assertFalse(scope.path.exists())
+
+    def test_heavy_target_cannot_escape_through_cgroupfs_or_proc_roots(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outcome = root / "escape.txt"
+            parent = _current_cgroup()
+            command = """
+import os
+import subprocess
+from pathlib import Path
+subprocess.run(['umount', '/sys/fs/cgroup'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+subprocess.run(
+    ['unshare', '--user', '--map-root-user', '--mount', 'sh', '-c', 'umount /sys/fs/cgroup'],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+attempts = [Path({parent!r}) / 'cgroup.procs']
+relative = Path({parent!r}).relative_to('/sys/fs/cgroup')
+attempts.extend(path / relative / 'cgroup.procs' for path in Path('/proc').glob('[0-9]*/root/sys/fs/cgroup'))
+escaped = False
+try:
+    os.kill({outer_pid}, 0)
+    escaped = True
+except OSError:
+    pass
+for path in attempts:
+    try:
+        descriptor = os.open(path, os.O_WRONLY)
+        os.close(descriptor)
+        escaped = True
+        break
+    except OSError:
+        pass
+Path({outcome!r}).write_text('escaped' if escaped else 'blocked', encoding='ascii')
+""".format(parent=str(parent), outcome=str(outcome), outer_pid=os.getpid())
+            result = HeavyRunner(root / "heavy.lock").run(
+                [sys.executable, "-c", command], cwd=parent, timeout=10
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual("blocked", outcome.read_text(encoding="ascii"))
+
     def test_heavy_runner_cleans_background_descendant_after_leader_exit(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             pid_file = root / "descendant.pid"
+            child_code = (
+                "import pathlib,time; "
+                "host=next(x.split()[1] for x in pathlib.Path('/proc/self/status').read_text().splitlines() if x.startswith('NSpid:')); "
+                f"pathlib.Path({str(pid_file)!r}).write_text(host); time.sleep(60)"
+            )
             command = (
-                "import subprocess,sys,pathlib; "
-                "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'],"
+                "import subprocess,sys,pathlib,time; "
+                f"subprocess.Popen([sys.executable,'-c',{child_code!r}],"
                 "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True); "
-                f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid))"
+                f"f=pathlib.Path({str(pid_file)!r}); d=time.monotonic()+3; "
+                "\nwhile not f.exists() and time.monotonic() < d:\n    time.sleep(0.01)\n"
             )
             result = HeavyRunner(root / "heavy.lock").run(
                 [sys.executable, "-c", command], timeout=10
@@ -85,11 +153,21 @@ class RuntimeTests(unittest.TestCase):
             root = Path(tmp)
             child_pid_file = root / "heavy.pid"
             wrapper_pid_file = root / "wrapper.pid"
+            cgroup_parent = _current_cgroup()
+            existing_scopes = {path.name for path in cgroup_parent.glob("loop-heavy-*")}
             wrapper = Path(__file__).resolve().parents[1] / "scripts" / "loop-engineering-heavy"
+            child_code = (
+                "import pathlib,time; "
+                "host=next(x.split()[1] for x in pathlib.Path('/proc/self/status').read_text().splitlines() if x.startswith('NSpid:')); "
+                f"pathlib.Path({str(child_pid_file)!r}).write_text(host); "
+                "time.sleep(60)"
+            )
             target = (
                 "import subprocess,sys,time,pathlib; "
-                "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
-                f"pathlib.Path({str(child_pid_file)!r}).write_text(str(p.pid)); "
+                "relative=next(x[3:] for x in pathlib.Path('/proc/self/cgroup').read_text().splitlines() if x.startswith('0::')); "
+                "nested=pathlib.Path('/sys/fs/cgroup')/relative.lstrip('/')/'nested'; nested.mkdir(); "
+                f"p=subprocess.Popen([sys.executable,'-c',{child_code!r}]); "
+                "(nested/'cgroup.procs').write_text(str(p.pid)); "
                 "time.sleep(60)"
             )
             parent = (
@@ -113,6 +191,16 @@ class RuntimeTests(unittest.TestCase):
                 while process_is_running(child_pid) and time.monotonic() < deadline:
                     time.sleep(0.02)
                 self.assertFalse(process_is_running(child_pid))
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    current = {path.name for path in cgroup_parent.glob("loop-heavy-*")}
+                    if current == existing_scopes:
+                        break
+                    time.sleep(0.02)
+                self.assertEqual(
+                    existing_scopes,
+                    {path.name for path in cgroup_parent.glob("loop-heavy-*")},
+                )
             finally:
                 if process_is_running(wrapper_pid):
                     os.killpg(wrapper_pid, signal.SIGKILL)
@@ -131,8 +219,9 @@ class RuntimeTests(unittest.TestCase):
                     str(wrapper),
                     sys.executable,
                     "-c",
-                    "import os,time,pathlib; "
-                    f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+                    "import time,pathlib; "
+                    "host=next(x.split()[1] for x in pathlib.Path('/proc/self/status').read_text().splitlines() if x.startswith('NSpid:')); "
+                    f"pathlib.Path({str(pid_file)!r}).write_text(host); "
                     "time.sleep(60)",
                 ],
                 env=environment,
@@ -336,16 +425,111 @@ class RuntimeTests(unittest.TestCase):
 
 
 class WorkerTests(unittest.TestCase):
+    def test_shutdown_during_launch_cannot_register_a_late_worker(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable = root / "profile"
+            executable.write_text("#!/bin/sh\nsleep 60\n", encoding="utf-8")
+            executable.chmod(0o755)
+            launched = threading.Event()
+            release = threading.Event()
+            spawned: list[subprocess.Popen[bytes]] = []
+
+            def delayed_popen(*args, **kwargs):
+                process = subprocess.Popen(*args, **kwargs)
+                spawned.append(process)
+                launched.set()
+                release.wait(5)
+                return process
+
+            worker = WorkerSpec("test", Role.DEV, ".agents/agent-dev.md", str(executable))
+            runner = WorkerRunner(
+                RuntimePaths(root / "runtime"),
+                popen=delayed_popen,
+                process_start=lambda pid: f"boot:{pid}",
+            )
+            results: list[WorkerResult] = []
+            thread = threading.Thread(
+                target=lambda: results.append(
+                    runner.run(
+                        "run-launch-race",
+                        Assignment(worker, candidate_at(root)),
+                        timeout=10,
+                    )
+                )
+            )
+            thread.start()
+            self.assertTrue(launched.wait(5))
+            runner.terminate_all()
+            release.set()
+            thread.join(10)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual("launch-failed", results[0].status)
+            self.assertFalse(runner._active)
+            self.assertIsNotNone(spawned[0].returncode)
+
+    def test_terminate_all_attempts_every_worker_after_one_cleanup_failure(self) -> None:
+        runner = WorkerRunner(RuntimePaths(Path("/tmp/runtime")))
+        first = object()
+        second = object()
+        runner._active = {1: (first, None), 2: (second, None)}  # type: ignore[assignment]
+        with patch(
+            "loop_harness.worker._terminate_and_reap",
+            side_effect=[RuntimeError("first failed"), None],
+        ) as terminate:
+            with self.assertRaisesRegex(RuntimeError, "1 worker cleanup"):
+                runner.terminate_all()
+        self.assertEqual(2, terminate.call_count)
+
+    def test_worker_can_invoke_nested_heavy_wrapper(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            marker = root / "heavy-ok"
+            executable = root / "profile"
+            heavy_code = (
+                f"from pathlib import Path; Path({str(marker)!r}).write_text('ok')"
+            )
+            executable.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os,subprocess,sys\n"
+                f"subprocess.run([os.environ['LOOP_HARNESS_HEAVY'], sys.executable, '-c', {heavy_code!r}], check=True)\n",
+                encoding="utf-8",
+            )
+            executable.chmod(0o755)
+            worker = WorkerSpec("test", Role.DEV, ".agents/agent-dev.md", str(executable))
+            assignment = Assignment(
+                worker,
+                Candidate(
+                    repo="Example/project",
+                    repo_path=root,
+                    number=11,
+                    title="heavy work",
+                    state="todo",
+                    priority="P1",
+                    role=Role.DEV,
+                    state_entered_at=NOW,
+                ),
+            )
+            result = WorkerRunner(
+                RuntimePaths(root / "runtime"), process_start=lambda pid: f"boot:{pid}"
+            ).run("run-heavy", assignment, timeout=15)
+            payload = json.loads(result.result_path.read_text(encoding="utf-8"))
+            self.assertEqual("completed", result.status, payload["stderr"])
+            self.assertEqual("ok", marker.read_text(encoding="utf-8"))
+
     def test_worker_cleans_background_descendant_after_profile_exit(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             pid_file = root / "descendant.pid"
             executable = root / "profile"
             executable.write_text(
-                "#!/usr/bin/env python3\nimport subprocess,sys,pathlib\n"
-                "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'],"
+                "#!/usr/bin/env python3\nimport subprocess,sys,pathlib,time\n"
+                "code=\"import pathlib,time; host=next(x.split()[1] for x in pathlib.Path('/proc/self/status').read_text().splitlines() if x.startswith('NSpid:')); "
+                f"pathlib.Path({str(pid_file)!r}).write_text(host); time.sleep(60)\"\n"
+                "subprocess.Popen([sys.executable,'-c',code],"
                 "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)\n"
-                f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid))\n",
+                f"f=pathlib.Path({str(pid_file)!r}); d=time.monotonic()+3\n"
+                "while not f.exists() and time.monotonic() < d:\n    time.sleep(0.01)\n",
                 encoding="utf-8",
             )
             executable.chmod(0o755)
@@ -491,7 +675,7 @@ class WorkerTests(unittest.TestCase):
             worker = WorkerSpec(
                 "mcgee", Role.DEV, ".agents/agent-dev.md", executable=str(executable)
             )
-            assignment = Assignment(worker, assignments()[1].candidate)
+            assignment = Assignment(worker, candidate_at(root))
 
             result = WorkerRunner(paths).run("run-noisy", assignment, timeout=10)
 
@@ -522,7 +706,7 @@ class WorkerTests(unittest.TestCase):
             worker = WorkerSpec(
                 "mcgee", Role.DEV, ".agents/agent-dev.md", executable=str(executable)
             )
-            assignment = Assignment(worker, assignments()[1].candidate)
+            assignment = Assignment(worker, candidate_at(root))
 
             result = WorkerRunner(paths).run("run-boundary", assignment, timeout=10)
 
@@ -551,7 +735,7 @@ class WorkerTests(unittest.TestCase):
             )
 
             WorkerRunner(paths).run(
-                "run-secret", Assignment(worker, assignments()[1].candidate), timeout=10
+                "run-secret", Assignment(worker, candidate_at(root)), timeout=10
             )
 
             for log_path in (
@@ -588,7 +772,7 @@ class WorkerTests(unittest.TestCase):
             thread = threading.Thread(
                 target=lambda: results.append(
                     WorkerRunner(paths).run(
-                        "run-live-log", Assignment(worker, assignments()[1].candidate), timeout=5
+                        "run-live-log", Assignment(worker, candidate_at(root)), timeout=5
                     )
                 )
             )
@@ -645,7 +829,7 @@ class WorkerTests(unittest.TestCase):
 
             result = WorkerRunner(paths).run(
                 "run-gated",
-                Assignment(worker, assignments()[1].candidate),
+                Assignment(worker, candidate_at(root)),
                 timeout=10,
                 on_started=on_started,
             )
@@ -673,7 +857,7 @@ class WorkerTests(unittest.TestCase):
 
             result = WorkerRunner(paths, process_start=lambda _pid: "unknown").run(
                 "run-no-identity",
-                Assignment(worker, assignments()[1].candidate),
+                Assignment(worker, candidate_at(root)),
                 timeout=10,
                 on_started=lambda *_: self.fail("unknown identity must not be persisted as running"),
             )
@@ -707,7 +891,7 @@ class WorkerTests(unittest.TestCase):
 
             result = WorkerRunner(paths).run(
                 "run-callback-failure",
-                Assignment(worker, assignments()[1].candidate),
+                Assignment(worker, candidate_at(root)),
                 timeout=10,
                 on_started=fail_callback,
             )
@@ -756,13 +940,14 @@ class WorkerTests(unittest.TestCase):
             return FakeProcess(int(argv[3]))
 
         with TemporaryDirectory() as tmp:
-            paths = RuntimePaths(Path(tmp) / "runtime")
+            root = Path(tmp)
+            paths = RuntimePaths(root / "runtime")
             paths.ensure()
             runner = WorkerRunner(paths, popen=popen, process_start=lambda pid: "start")
             injected_worker = WorkerSpec(
                 "mcgee", Role.DEV, ".agents/agent-dev.md", executable="not-on-path"
             )
-            injected_assignment = Assignment(injected_worker, assignments()[1].candidate)
+            injected_assignment = Assignment(injected_worker, candidate_at(root))
             with patch.dict(
                 os.environ,
                 {"GH_TOKEN": "do-not-inherit", "TELEGRAM_BOT_TOKEN": "also-secret"},
@@ -774,6 +959,7 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(b"GO", recorded["gate"])
         self.assertEqual(True, recorded["kwargs"]["start_new_session"])
         self.assertEqual(False, recorded["kwargs"].get("shell", False))
+        self.assertEqual(root, recorded["kwargs"]["cwd"])
         self.assertNotIn("GH_TOKEN", recorded["kwargs"]["env"])
         self.assertNotIn("TELEGRAM_BOT_TOKEN", recorded["kwargs"]["env"])
         self.assertIn("run-123", recorded["input"])
@@ -788,7 +974,7 @@ class WorkerTests(unittest.TestCase):
                 ".agents/agent-dev.md",
                 executable=str(root / "missing-profile"),
             )
-            assignment = Assignment(worker, assignments()[1].candidate)
+            assignment = Assignment(worker, candidate_at(root))
 
             result = WorkerRunner(paths).run("run-missing", assignment, timeout=5)
 

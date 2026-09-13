@@ -98,14 +98,27 @@ $LOOP_HARNESS_HEAVY npm run build
 The heavy lock covers only the child command. Other profiles continue
 lightweight work. Each worker and heavy command runs inside a dedicated,
 delegated cgroup v2 scope. A guardian remains outside that scope, retains the
-heavy lease when applicable, and uses `cgroup.kill` before releasing ownership;
-this contains descendants even when they call `setsid()`. The harness fails
-closed when delegated cgroup-v2 kill support is unavailable. SIGINT/SIGTERM and
-Linux parent-death handling wake ordinary cleanup rather than performing
-blocking teardown in a signal handler. Recorded PID/start identity is used for
-reservation liveness, while termination targets the owned cgroup instead of a
-possibly reused numeric process group. A listening port alone never proves
-ownership.
+heavy lease when applicable, and uses `cgroup.kill` before releasing ownership.
+The target is placed in a subordinate user/PID namespace, preventing it from
+addressing or signaling the guardians and dispatcher outside that namespace. A
+stacked Landlock policy blocks filesystem mutations outside expected operational
+roots and, specifically, grants cgroup membership writes only inside the owned
+scope. Repository paths are resolved and used as each worker's current working
+directory; candidate write roots that overlap or contain cgroupfs are discarded.
+Landlock ABI v1 is used only as part of the cgroup-escape boundary, not claimed
+as general file-integrity isolation. A target cannot move itself into the
+writable parent hierarchy even if it remounts cgroupfs or enters further
+namespaces; nested heavy wrappers create another PID namespace and a child scope
+inside the worker-owned subtree. Descendants are therefore
+contained even when they call `setsid()`. Empty nested cgroups are removed
+bottom-up after termination, including guardian parent-death cleanup. The
+harness fails closed when delegated cgroup-v2 kill support, unprivileged user
+and PID namespaces, `unshare`, or Landlock filesystem confinement is
+unavailable. SIGINT/SIGTERM and Linux parent-death
+handling wake ordinary cleanup rather than performing blocking teardown in a
+signal handler. Recorded PID/start identity is used for reservation liveness, while
+termination targets the owned cgroup instead of a possibly reused numeric
+process group. A listening port alone never proves ownership.
 
 ## Configuration
 

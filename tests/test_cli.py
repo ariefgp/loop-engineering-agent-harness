@@ -50,8 +50,9 @@ class CliTests(unittest.TestCase):
             worker_pid = root / "worker.pid"
             profile = bin_dir / "mcgee"
             profile.write_text(
-                "#!/usr/bin/env python3\nimport os,time,pathlib\n"
-                f"pathlib.Path({str(worker_pid)!r}).write_text(str(os.getpid()))\n"
+                "#!/usr/bin/env python3\nimport time,pathlib\n"
+                "host=next(x.split()[1] for x in pathlib.Path('/proc/self/status').read_text().splitlines() if x.startswith('NSpid:'))\n"
+                f"pathlib.Path({str(worker_pid)!r}).write_text(host)\n"
                 "time.sleep(60)\n",
                 encoding="utf-8",
             )
@@ -72,15 +73,23 @@ class CliTests(unittest.TestCase):
                     time.sleep(0.02)
                 self.assertTrue(worker_pid.exists())
                 pid = int(worker_pid.read_text(encoding="utf-8"))
-                process.send_signal(signal.SIGTERM)
+                for _ in range(8):
+                    try:
+                        process.send_signal(signal.SIGTERM)
+                    except ProcessLookupError:
+                        break
                 process.wait(timeout=10)
+                self.assertEqual(128 + signal.SIGTERM, process.returncode)
                 deadline = time.monotonic() + 5
                 while Path(f"/proc/{pid}").exists() and time.monotonic() < deadline:
                     time.sleep(0.02)
                 self.assertFalse(Path(f"/proc/{pid}").exists())
                 with sqlite3.connect(runtime / "runs.sqlite3") as connection:
-                    status = connection.execute("SELECT state FROM runs").fetchone()[0]
+                    status, outcome = connection.execute(
+                        "SELECT state, outcome FROM runs"
+                    ).fetchone()
                 self.assertEqual("finished", status)
+                self.assertIsNotNone(outcome)
             finally:
                 if process.poll() is None:
                     process.kill()
@@ -181,6 +190,47 @@ print(json.dumps(rows))
             self.assertEqual("dry-run", payload["mode"])
             self.assertEqual(6, len(payload["assignments"]))
             self.assertFalse(runtime.exists())
+
+    def test_cli_redacts_github_stderr_credentials(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            source_agents = Path(__file__).resolve().parents[1] / ".agents"
+            target_agents = repo / ".agents"
+            target_agents.mkdir()
+            for source in source_agents.glob("*.md"):
+                shutil.copyfile(source, target_agents / source.name)
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            subprocess.run(
+                ["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/Example/project.git"],
+                check=True,
+            )
+            registry = root / "registry.json"
+            registry.write_text(
+                json.dumps({"repositories": [{"slug": "Example/project", "path": str(repo), "enabled": True, "roles": ["dev"]}]}),
+                encoding="utf-8",
+            )
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            secret = "github_pat_cli-secret-value"
+            gh = bin_dir / "gh"
+            gh.write_text(
+                f"#!/bin/sh\nprintf '%s\\n' 'Authorization: Bearer {secret}' >&2\nexit 1\n",
+                encoding="utf-8",
+            )
+            gh.chmod(0o755)
+            completed = subprocess.run(
+                [sys.executable, "-m", "loop_harness", "--registry", str(registry), "--runtime", str(root / "runtime"), "tick", "--dry-run"],
+                cwd=Path(__file__).resolve().parents[1],
+                env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+                text=True,
+                capture_output=True,
+                timeout=10,
+            )
+            self.assertEqual(1, completed.returncode)
+            self.assertNotIn(secret, completed.stderr)
+            self.assertIn("[REDACTED]", completed.stderr)
 
     def test_heavy_cli_runs_argument_vector_after_separator(self) -> None:
         with TemporaryDirectory() as tmp:

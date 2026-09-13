@@ -49,7 +49,18 @@ MAX_CAPTURE = 128_000
 def arm_parent_death_signal(signum: int = signal.SIGTERM) -> None:
     """Fail closed unless Linux can bind this process lifetime to its parent."""
     parent = os.getppid()
-    if parent <= 1:
+    nested_parent_one = False
+    if parent == 1:
+        try:
+            nspid = next(
+                line.split()[1:]
+                for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines()
+                if line.startswith("NSpid:")
+            )
+            nested_parent_one = len(nspid) > 1 and nspid[-1] != "1"
+        except (OSError, StopIteration):
+            nested_parent_one = False
+    if parent < 1 or (parent == 1 and not nested_parent_one):
         raise RuntimeError("cannot arm parent-death signal without a live parent")
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.prctl(1, signum, 0, 0, 0) != 0:  # PR_SET_PDEATHSIG

@@ -56,18 +56,42 @@ class CgroupScope:
             except FileNotFoundError:
                 pass
 
+    def _directories_bottom_up(self) -> list[Path]:
+        root = self.path.resolve()
+        pending = [root]
+        discovered: list[Path] = []
+        while pending:
+            current = pending.pop()
+            try:
+                current.relative_to(root)
+            except ValueError as exc:
+                raise RuntimeError("cgroup cleanup escaped its owned scope") from exc
+            discovered.append(current)
+            try:
+                with os.scandir(current) as entries:
+                    for entry in entries:
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(Path(entry.path))
+            except FileNotFoundError:
+                continue
+        return list(reversed(discovered))
+
     def remove(self, timeout: float = 2) -> None:
         deadline = time.monotonic() + timeout
         while self.path.exists():
             try:
-                self.path.rmdir()
-                return
-            except FileNotFoundError:
-                return
+                for directory in self._directories_bottom_up():
+                    try:
+                        directory.rmdir()
+                    except FileNotFoundError:
+                        pass
+                if not self.path.exists():
+                    return
             except OSError:
-                if time.monotonic() >= deadline:
-                    raise RuntimeError(f"contained cgroup did not drain: {self.path.name}")
-                time.sleep(0.02)
+                pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"contained cgroup did not drain: {self.path.name}")
+            time.sleep(0.02)
 
     def cleanup(self) -> None:
         self.kill_all()

@@ -51,6 +51,20 @@ class GitHubClientTests(unittest.TestCase):
         with self.assertRaisesRegex(GitHubError, "authentication failed"):
             GitHubClient(runner=runner).scan([repo])
 
+    def test_github_failure_redacts_credentials(self) -> None:
+        secret = "github_pat_example-secret-value"
+
+        def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                argv, 1, "", f"Authorization: Bearer {secret}"
+            )
+
+        repo = RepositoryConfig("Example/project", Path("/srv/project"), True, (Role.DEV,))
+        with self.assertRaises(GitHubError) as raised:
+            GitHubClient(runner=runner).scan([repo])
+        self.assertNotIn(secret, str(raised.exception))
+        self.assertIn("[REDACTED]", str(raised.exception))
+
     def test_rejects_malformed_github_output(self) -> None:
         def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(argv, 0, "not-json", "")

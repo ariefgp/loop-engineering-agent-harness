@@ -177,13 +177,21 @@ class WorkerRunner:
         self.run_budget_seconds = run_budget_seconds
         self._active_lock = threading.Lock()
         self._active: dict[int, tuple[subprocess.Popen[bytes], CgroupScope | None]] = {}
+        self._stopping = False
 
     def terminate_all(self) -> None:
-        """Terminate only process groups launched by this runner instance."""
+        """Terminate every worker owned by this runner, even if one cleanup fails."""
         with self._active_lock:
+            self._stopping = True
             active = list(self._active.values())
+        errors: list[Exception] = []
         for process, scope in active:
-            _terminate_and_reap(process, scope=scope)
+            try:
+                _terminate_and_reap(process, scope=scope)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise RuntimeError(f"{len(errors)} worker cleanup operation(s) failed") from errors[0]
 
     def _persist(
         self,
@@ -294,6 +302,7 @@ class WorkerRunner:
                     ]
                 process = self._popen(
                     supervisor_argv,
+                    cwd=assignment.candidate.repo_path,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -308,7 +317,18 @@ class WorkerRunner:
                 gate_read = None
 
             with self._active_lock:
-                self._active[process.pid] = (process, scope)
+                stopping = self._stopping
+                if not stopping:
+                    self._active[process.pid] = (process, scope)
+            if stopping:
+                _terminate_and_reap(process, scope=scope)
+                for stream in (process.stdin, process.stdout, process.stderr):
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
+                raise RuntimeError("worker runner shutdown was requested during launch")
 
             if process.stdout is None or process.stderr is None or process.stdin is None:
                 raise RuntimeError("worker pipes were not created")

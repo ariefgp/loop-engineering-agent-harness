@@ -3,11 +3,17 @@ from __future__ import annotations
 import ctypes
 import os
 import select
+import shutil
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from loop_harness.containment import CgroupScope
 
 
 _GATE_TIMEOUT_SECONDS = 10
@@ -32,23 +38,27 @@ def _move(path: Path, pid: int) -> None:
     (path / "cgroup.procs").write_text(str(pid), encoding="ascii")
 
 
-def _cleanup_cgroup(path: Path, parent: Path) -> None:
-    _move(parent, os.getpid())
+def _inside_mapped_root_user_namespace() -> bool:
+    if os.geteuid() != 0:
+        return False
     try:
-        (path / "cgroup.kill").write_text("1", encoding="ascii")
-    except FileNotFoundError:
-        return
-    deadline = time.monotonic() + 2
-    while path.exists():
+        mappings = Path("/proc/self/uid_map").read_text(encoding="ascii").split()
+    except OSError:
+        return False
+    return len(mappings) >= 3 and not (
+        mappings[0] == "0" and mappings[1] == "0" and int(mappings[2]) > 1
+    )
+
+
+def _cleanup_cgroup(path: Path, parent: Path) -> None:
+    while True:
         try:
-            path.rmdir()
+            _move(parent, os.getpid())
+            CgroupScope(path=path, parent=parent).cleanup()
             return
-        except FileNotFoundError:
-            return
-        except OSError:
-            if time.monotonic() >= deadline:
-                return
-            time.sleep(0.02)
+        except (OSError, RuntimeError):
+            # The guardian must retain its lease until ownership is gone.
+            time.sleep(0.1)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,8 +101,26 @@ def main(argv: list[str] | None = None) -> int:
             return 70
         os.close(gate_fd)
         gate_fd = -1
+        unshare = shutil.which("unshare")
+        if unshare is None:
+            print("cannot run contained command: unshare is unavailable", file=sys.stderr)
+            return 70
+        namespace_arguments = [unshare]
+        if not _inside_mapped_root_user_namespace():
+            namespace_arguments.extend(["--user", "--map-root-user"])
+        namespace_arguments.extend(
+            ["--pid", "--fork", "--kill-child=SIGKILL"]
+        )
         child = subprocess.Popen(
-            target,
+            [
+                *namespace_arguments,
+                sys.executable,
+                str(Path(__file__).with_name("namespace_exec.py")),
+                "--scope",
+                str(cgroup),
+                "--",
+                *target,
+            ],
             stdin=None,
             stdout=None,
             stderr=None,

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from .config import RepositoryConfig
 from .models import Candidate, Role, deduplicate_and_sort
+from .runtime import redact_text
 
 
 class GitHubError(RuntimeError):
@@ -47,7 +48,7 @@ def _default_runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise GitHubError(f"GitHub command failed: {exc}") from exc
+        raise GitHubError(f"GitHub command failed: {redact_text(str(exc))}") from exc
 
 
 def _parse_time(value: object) -> datetime:
@@ -88,7 +89,7 @@ class GitHubClient:
             ]
             result = self._runner(argv)
             if result.returncode != 0:
-                detail = result.stderr.strip() or f"exit {result.returncode}"
+                detail = redact_text(result.stderr.strip()) or f"exit {result.returncode}"
                 raise GitHubError(f"{repo.slug}: {detail}")
             try:
                 rows = json.loads(result.stdout)

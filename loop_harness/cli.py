@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -12,7 +13,7 @@ from pathlib import Path
 from .app import Harness, TickResult
 from .config import ConfigError, load_registry
 from .github import GitHubClient, GitHubError
-from .runtime import HeavyRunner, RuntimePaths, arm_parent_death_signal
+from .runtime import HeavyRunner, RuntimePaths, arm_parent_death_signal, redact_text
 from .scheduler import DEFAULT_WORKERS, Assignment
 from .worker import WorkerRunner
 
@@ -106,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             print("heavy command timed out and was terminated", file=sys.stderr)
             return 124
         except (OSError, RuntimeError) as exc:
-            print(f"heavy command failed: {exc}", file=sys.stderr)
+            print(f"heavy command failed: {redact_text(str(exc))}", file=sys.stderr)
             return 1
         sys.stdout.write(result.stdout or "")
         sys.stderr.write(result.stderr or "")
@@ -128,14 +129,20 @@ def main(argv: list[str] | None = None) -> int:
             signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)
         }
         termination_requested = threading.Event()
+        termination_signum: list[int | None] = [None]
         cleanup_wakeup = threading.Event()
         cleanup_finished = threading.Event()
+        cleanup_errors: list[Exception] = []
 
         def cleanup_workers() -> None:
-            cleanup_wakeup.wait()
-            if termination_requested.is_set():
-                runner.terminate_all()
-            cleanup_finished.set()
+            try:
+                cleanup_wakeup.wait()
+                if termination_requested.is_set():
+                    runner.terminate_all()
+            except Exception as exc:
+                cleanup_errors.append(exc)
+            finally:
+                cleanup_finished.set()
 
         cleanup_thread = threading.Thread(
             target=cleanup_workers,
@@ -145,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
         cleanup_thread.start()
 
         def stop_workers(signum: int, _frame: object) -> None:
+            if termination_signum[0] is not None:
+                return
+            termination_signum[0] = signum
             termination_requested.set()
             cleanup_wakeup.set()
             raise _TerminationRequested(signum)
@@ -155,15 +165,17 @@ def main(argv: list[str] | None = None) -> int:
             result = harness.tick(dry_run=bool(args.dry_run))
         finally:
             cleanup_wakeup.set()
-            cleanup_finished.wait(timeout=10)
-            cleanup_thread.join(timeout=1)
+            cleanup_finished.wait()
+            cleanup_thread.join()
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
+            if cleanup_errors:
+                raise RuntimeError("worker shutdown did not complete cleanly") from cleanup_errors[0]
     except _TerminationRequested as exc:
         print("loop-harness: interrupted; active workers terminated", file=sys.stderr)
         return 128 + exc.signum
-    except (ConfigError, GitHubError, OSError, ValueError) as exc:
-        print(f"loop-harness: {exc}", file=sys.stderr)
+    except (ConfigError, GitHubError, OSError, RuntimeError, sqlite3.Error, ValueError) as exc:
+        print(f"loop-harness: {redact_text(str(exc))}", file=sys.stderr)
         return 1
     print(json.dumps(_tick_json(result), indent=2, sort_keys=True))
     return 0
