@@ -9,11 +9,31 @@ import subprocess
 import sys
 import time
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import MagicMock, patch
+
+from loop_harness.app import TickResult
+from loop_harness.cli import main
+from loop_harness.worker import WorkerResult
 
 
 class CliTests(unittest.TestCase):
+    def test_tick_returns_nonzero_when_any_worker_result_failed(self) -> None:
+        runner = MagicMock()
+        failed = WorkerResult("run-failed", "failed", 1, Path("/tmp/result.json"))
+        with patch("loop_harness.cli.load_registry") as registry, patch(
+            "loop_harness.cli.GitHubClient"
+        ), patch("loop_harness.cli.WorkerRunner", return_value=runner), patch(
+            "loop_harness.cli.Harness"
+        ) as harness, redirect_stdout(StringIO()):
+            registry.return_value.enabled = ()
+            harness.return_value.tick.return_value = TickResult("live", [], [failed], [])
+            exit_code = main(["--runtime", "/tmp/runtime", "tick"])
+        self.assertEqual(1, exit_code)
+
     def test_tick_sigterm_cleans_worker_and_records_terminal_state(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

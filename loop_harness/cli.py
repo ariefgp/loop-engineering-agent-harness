@@ -178,4 +178,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"loop-harness: {redact_text(str(exc))}", file=sys.stderr)
         return 1
     print(json.dumps(_tick_json(result), indent=2, sort_keys=True))
+    if any(item.status != "completed" for item in result.results):
+        return 1
     return 0
