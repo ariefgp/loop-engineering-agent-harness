@@ -846,7 +846,8 @@ query($owner:String!,$name:String!,$number:Int!){
         ):
             raise GitHubError(f"{repo}: malformed contract response")
         try:
-            return base64.b64decode(payload["content"], validate=True)
+            encoded = "".join(payload["content"].splitlines())
+            return base64.b64decode(encoded, validate=True)
         except (ValueError, binascii.Error) as exc:
             raise GitHubError(f"{repo}: malformed contract content") from exc
 

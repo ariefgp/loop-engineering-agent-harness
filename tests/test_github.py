@@ -866,7 +866,8 @@ class GitHubClientTests(unittest.TestCase):
 
         def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
             calls.append(argv)
-            payload = {"encoding": "base64", "content": base64.b64encode(b"contract\n").decode()}
+            encoded = base64.b64encode(b"contract\n").decode()
+            payload = {"encoding": "base64", "content": encoded[:4] + "\n" + encoded[4:]}
             return subprocess.CompletedProcess(argv, 0, json.dumps(payload), "")
 
         content = GitHubClient(runner=runner).file_at_revision(
