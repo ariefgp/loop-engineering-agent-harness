@@ -125,7 +125,7 @@ def build_task_prompt(run_id: str, assignment: Assignment, paths: RuntimePaths) 
             },
             {
                 "kind": "review",
-                "summary": "Reviewed exact pull request head without blockers",
+                "summary": "Reviewed exact pull request head with a passing verdict",
                 "url": f"https://github.com/{item.repo}/pull/{pr}#pullrequestreview-123456789",
             },
             {
@@ -136,7 +136,11 @@ def build_task_prompt(run_id: str, assignment: Assignment, paths: RuntimePaths) 
         ], separators=(",", ":"))
         evidence_rule = (
             "QA evidence must include kinds test, review, and screenshot; every screenshot "
-            "URL must also appear as an inline Markdown image in this same comment."
+            "URL must also appear as an inline Markdown image in this same comment. For a "
+            "passing COMMENTED review, its GitHub review body must not contain any blocking "
+            "lexeme (block, blocked, blocker, blocking, changes requested, do not merge, not "
+            "ready, must fix, reject, rejected), even in a negated phrase such as 'no blockers'; "
+            "state the positive passing verdict instead."
         )
     else:
         if workspace is None:

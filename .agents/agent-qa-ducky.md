@@ -106,7 +106,11 @@ Test evidence must be an exact Actions run/job and review evidence must use the 
 subpaths do not qualify. The dispatcher reads artifacts back and binds repository,
 exact assigned head, successful status, URL identity, and authenticated author.
 Reviews must be `APPROVED` or substantive non-blocking `COMMENTED`; blocking,
-dismissed, or trivial reviews fail.
+dismissed, or trivial reviews fail. A passing `COMMENTED` review body must avoid
+the blocking lexemes checked by the dispatcher (`block`, `blocked`, `blocker`,
+`blocking`, `changes requested`, `do not merge`, `not ready`, `must fix`, `reject`,
+and `rejected`) even in negated phrases such as “no blockers”; state a positive
+passing verdict instead.
 All three kinds are mandatory, and every screenshot URL must also render inline
 as a Markdown image in the same comment. State, issue, PR, and head must match
 the sole label and assigned PR. Prose, stdout, empty evidence, bare screenshot

@@ -256,7 +256,11 @@ evidence must use the exact `#pullrequestreview-<id>` anchor; PR pages, `/files`
 `/checks`, and arbitrary PR subpaths do not qualify. The dispatcher reads artifacts
 back and binds repository, exact assigned head, successful status, URL identity,
 and authenticated author. Reviews must be `APPROVED` or substantive non-blocking
-`COMMENTED`; blocking, dismissed, or trivial reviews fail. Include all three required kinds, and render every screenshot
+`COMMENTED`; blocking, dismissed, or trivial reviews fail. A passing `COMMENTED`
+review body must avoid the blocking lexemes checked by the dispatcher (`block`,
+`blocked`, `blocker`, `blocking`, `changes requested`, `do not merge`, `not ready`,
+`must fix`, `reject`, and `rejected`) even in negated phrases such as “no blockers”;
+state a positive passing verdict instead. Include all three required kinds, and render every screenshot
 URL as `![descriptive alt](https://github.com/user-attachments/assets/<id>)` in
 the same comment. State, issue, PR, and head must match the sole label and exact
 assigned PR. Prose, stdout, empty evidence, bare screenshot URLs, and duplicate
