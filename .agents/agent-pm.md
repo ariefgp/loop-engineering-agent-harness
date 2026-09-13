@@ -1,33 +1,24 @@
 # Agent PM
 
-## CLI invocation
+## Hermes profile execution
 
-Agent PM runs as a Claude Code CLI non-interactive session:
+The host harness launches the persistent **Gibbs** Hermes profile and supplies
+exactly one reserved issue. Do not scan for or claim a second issue. Read this
+file, `.agents/WORKFLOW.md`, and the repository's `AGENTS.md`/`CLAUDE.md` before
+working. The deterministic harness performs the zero-token queue scan.
 
-```
-claude -p --model opus --permission-mode auto --output-format json --add-dir <repo-path> "<prompt>"
-```
+## Dispatcher-owned workspace
 
-Model: **opus** — deep reasoning for spec writing, edge case coverage, dependency analysis, and project brief alignment.
-
-The cron prompt instructs Claude Code to read this file, `.agents/WORKFLOW.md`, and `AGENTS.md` before executing. This file is the single source of truth for Agent PM instructions.
-
-## Pre-check gate (quota savings)
-
-Before invoking `claude -p`, the OpenClaw cron session MUST perform a lightweight
-pre-check using `gh` CLI to avoid burning Claude Code quota on no-op runs.
-
-```bash
-gh issue list --repo <owner>/<repo> --label "to be planned" --state open --json number,title --limit 5
-```
-
-Decision rules:
-- If zero `to be planned` issues: reply `NO_REPLY` and stop. Do NOT invoke `claude`.
-- If eligible issues exist: proceed to invoke `claude -p` for the actual work.
+Work only in the per-run worktree selected and created by the dispatcher. Do not
+check out `main`, create, switch, move, or remove worktrees or branches, or
+restore the shared checkout. Leave the assigned source revision unchanged and
+clean; do not push source changes. The dispatcher verifies the terminal state
+and deletes a clean workspace. Dirty or unpublished workspaces are retained as
+recovery evidence rather than destroyed.
 
 ## Trigger
 
-Pick up tasks labeled `to be planned`.
+Accept only the supplied issue, which must be labeled `to be planned`.
 
 ## Mandatory code inspection
 
@@ -172,6 +163,39 @@ Each open question must include:
 |-----------|--------|
 | Planning complete, no ambiguity | Remove `to be planned` → Add `plan approval` |
 | Has open questions that block development | Remove `to be planned` → Add `need confirmation` |
+
+After the label transition, post exactly one final fenced block for the current
+run ID across all issue comments, replacing placeholders with the true state, issue, summary, and
+durable issue-comment URL:
+
+```loop-engineering-handoff
+{
+  "schema_version": 1,
+  "run_id": "<run_id>",
+  "role": "pm",
+  "state": "<plan approval|need confirmation>",
+  "issue": 0,
+  "pr_number": null,
+  "head_sha": null,
+  "evidence": [
+    {"kind": "<plan|blocker>", "summary": "<substantive planning result or strict blocker>", "url": "https://github.com/<owner>/<repo>/issues/<issue>#issuecomment-<id>"}
+  ]
+}
+```
+
+Use exactly these top-level and evidence keys. Use `plan` for `plan approval` and
+`blocker` for `need confirmation`. PM plan or blocker evidence must link to the
+exact issue comment carrying that durable plan or blocker; plain issue pages and
+arbitrary subpaths do not qualify. The dispatcher reads the comment back and
+requires the exact repository, issue, URL identity, authenticated author, run ID,
+and substantive plan/blocker content. Evidence values must be meaningful nonempty
+strings and the URL must be the trusted exact GitHub issue-comment path. The state must match the sole
+state label. Stdout, prose-only markers, empty evidence, or duplicate handoff
+blocks do not count; a mismatch fails the run and retains the workspace.
+The dispatcher reads the handoff and cited issue-comment identity back from the
+exact GitHub repository and issue and requires the authenticated automation
+author. Missing, stale, unrelated, or mismatched artifacts fail closed; where a
+later role cites revision-bound evidence, it must also match the assigned head.
 
 ## Rules
 

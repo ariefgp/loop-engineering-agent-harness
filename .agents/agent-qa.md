@@ -1,41 +1,29 @@
 # Agent QA
 
-## CLI invocation
+## Hermes profile execution
 
-Agent QA runs with Claude Code as the first-priority execution engine:
+The host harness launches the persistent **Jimmy** Hermes profile and supplies
+exactly one atomically reserved issue. Do not scan for or claim a second issue.
+Read this file, `.agents/WORKFLOW.md`, and the repository's
+`AGENTS.md`/`CLAUDE.md` before working.
 
-```
-claude -p --model opus --permission-mode auto --output-format json --add-dir <repo-path> "<prompt>"
-```
+The dispatcher has already created a unique detached worktree pinned to the
+exact PR head. Work only in that supplied path. Do not check out `main`, create
+or switch branches, create/move/remove worktrees, or restore the shared checkout.
+QA must not commit or push source changes and must leave the assigned revision
+unchanged and clean. The dispatcher verifies the PR head and deletes the clean
+worktree after the worker and its cgroup are terminal.
 
-Model: **opus** — deep code review, functional testing, and bug reporting.
-
-If Claude Code is unavailable — for example the `claude` command is missing, returns an execution error, authentication error, rate-limit/quota error, or otherwise cannot start/complete the QA task — Agent QA MUST fall back to the existing OpenClaw model/session and continue the same QA task directly. The fallback model must read this file, `.agents/WORKFLOW.md`, and `AGENTS.md`, then follow the same QA process, label transitions, GitHub comments, evidence requirements, and cleanup requirements. Do not skip an eligible `qa ready` issue solely because Claude Code is temporarily unavailable.
-
-The cron prompt instructs the active execution engine (Claude Code first, OpenClaw fallback only when needed) to read this file, `.agents/WORKFLOW.md`, and `AGENTS.md` before executing. This file is the single source of truth for Agent QA instructions.
-
-## Pre-check gate (quota savings)
-
-Before invoking `claude -p`, the OpenClaw cron session MUST perform a lightweight
-pre-check using `gh` CLI to avoid burning Claude Code quota on no-op runs.
-
-```bash
-gh issue list --repo <owner>/<repo> --label "qa in progress" --state open --json number,title --limit 5
-gh issue list --repo <owner>/<repo> --label "qa ready" --state open --json number,title --limit 5
-```
-
-Decision rules:
-- If one or more `qa in progress` issues exist: proceed to invoke `claude -p` (or fallback) to resume the oldest valid QA-in-progress issue; do not pick a new `qa ready` issue.
-- If zero `qa in progress` issues and zero `qa ready` issues: reply `NO_REPLY` and stop. Do NOT invoke `claude`.
-- If zero `qa in progress` issues and eligible `qa ready` issues exist: proceed to invoke `claude -p` for the actual work.
-- If `claude -p` is unavailable, errors, hits authentication/rate-limit/quota limits, or cannot complete the QA task, continue using the existing OpenClaw model/session as the fallback execution engine.
-- The fallback path must perform the full Agent QA workflow; it is not a no-op and must not downgrade QA evidence, label, dependency, mergeability, real-data, Playwright, visual verification, or cleanup requirements.
+For installs, builds, dev servers, browser tests, Docker, or local Supabase,
+run the command through `$LOOP_HARNESS_HEAVY <command>`. Only one
+heavy command runs on the host at a time while all six profiles may continue
+lightweight work concurrently.
 
 ## Trigger
 
-Pick up tasks labeled `qa ready` for new QA work. Before picking a new issue, check for `qa in progress` issues and resume one if present.
+Accept only the supplied `qa ready` or resumable `qa in progress` issue.
 
-When starting a new `qa ready` issue, Agent QA MUST immediately remove `qa ready` and add `qa in progress` in the same label action before detailed review/testing begins. Claim the issue in the same action: assign yourself when possible and add a GitHub issue comment noting that QA has started, including `CLAIMED by Agent QA (<engine>) at <ISO-8601 UTC timestamp>` and the resulting state label `qa in progress` (see WORKFLOW.md "Issue claiming and staleness").
+When starting a new `qa ready` issue, Agent QA MUST verify that the harness reservation matches this profile and issue, then remove `qa ready` and add `qa in progress` before detailed review. Add a GitHub comment referencing the harness run ID and resulting state (see WORKFLOW.md "Harness reservations and staleness").
 
 When QA is complete, Agent QA MUST remove `qa in progress` and add the final result label (`review ready` or `feedback`; use `need confirmation` only when a blocking dependency/confirmation need prevents safe QA completion).
 
@@ -75,36 +63,31 @@ Required before marking `review ready`:
 
 Do not pass QA based only on static screenshots, Storybook-only views, mocked fixture data, local-only fake data, or hardcoded page states unless the human owner explicitly approved that exception for the issue.
 
-### Vercel preview testing (when local env is unavailable)
+### Repository-defined remote verification
 
-**This repo has full integration env vars configured as GitHub secrets and Vercel project settings.** The following secrets are available in CI/Vercel:
+Do not assume that the target repository has CI E2E, a preview deployment, a
+specific hosting provider, integration credentials, seeded remote data, or an
+`.env.local` file. Establish the available and required paths from the target's
+`AGENTS.md`/`CLAUDE.md`, issue acceptance criteria, repository workflows, and
+the exact PR's checks.
 
-- `SUPABASE_SECRET_KEY`, `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-- `RESEND_API_KEY`, `NEXT_PUBLIC_MAPBOX_TOKEN`, `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_SENTRY_DSN`
-- `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`
+When local verification needs unavailable configuration:
 
-Every PR automatically deploys to a **Vercel preview URL** with these env vars live. The preview URL follows the pattern:
-`https://premier-core-git-feat-<branch-slug>-<hash>-premier-portal-platform.vercel.app`
-
-Get the exact URL via:
-```bash
-gh pr view <PR_NUMBER> --repo Premier-platform/premier-core --json statusCheckRollup --jq '.statusCheckRollup[] | select(.name == "Vercel") | .targetUrl'
-```
-
-**When local `.env.local` is missing or `hasSupabase` is false:**
-
-1. **Do NOT report "no runtime env" as a blocker.** The env exists on the Vercel preview.
-2. **Test against the Vercel preview URL** instead of local dev server. The preview has real Supabase, real DB, real seeded data.
-3. If the preview is protected by Vercel Deployment Protection (SSO redirect), use the PR's Playwright E2E tests which run in CI with full env injected:
-   ```bash
-   # CI E2E runs automatically on PR via GitHub Actions
-   gh run list --repo Premier-platform/premier-core --branch <branch-name> --limit 3
-   gh run view <run-id> --repo Premier-platform/premier-core --log | grep -A5 "playwright\|e2e"
-   ```
-4. If CI E2E passes for the PR branch, that counts as real-data verification (CI runs with `SUPABASE_SECRET_KEY` + dev-auth enabled).
-5. Only mark `need confirmation` for env reasons if BOTH the Vercel preview AND CI E2E are inaccessible. This should be extremely rare.
-
-**Key point:** The Vercel preview deploys with the same migration + seed pipeline as production. If `prebuild` runs migrations and the preview is "Ready," the schema is live and testable. Do not assume "no local env = no real data."
+1. Identify which configuration or credential names are actually required,
+   without reading, printing, or exposing secret values.
+2. Use a target-approved local env file, credential manager, staging service,
+   preview deployment, or CI job only when the repository contract/context
+   authorizes it.
+3. Verify any remote environment belongs to the exact PR head and uses the data
+   and service configuration required by the acceptance criteria. A green
+   deployment status alone is not functional verification.
+4. Count CI as evidence only when its inspected logs/artifacts demonstrate the
+   relevant checks on the exact PR head. CI does not replace required rendered
+   UI, interaction, negative-case, regression, or real-data evidence.
+5. If every repository-defined verification path required for safe QA is absent
+   or inaccessible, document what was checked and move to `feedback` or
+   `need confirmation` as appropriate. Never assume credentials exist, weaken
+   coverage, or pass based on an unrelated repository's setup.
 
 ## Screenshot requirement (mandatory for ALL QA runs)
 
@@ -112,15 +95,17 @@ gh pr view <PR_NUMBER> --repo Premier-platform/premier-core --json statusCheckRo
 
 ### Workflow
 
-1. **Start local dev server:**
+1. **Start the repository-defined local dev server through the heavy wrapper:**
    ```bash
-   cd <repo-path> && npm run dev &
-   sleep 5
+   $LOOP_HARNESS_HEAVY <repository-defined-dev-command>
    ```
+   Launch that wrapper with the execution tool's tracked background/session
+   facility, never an untracked shell `&`. Record the wrapper PID/process
+   identity and wait for the repository-defined readiness signal.
 
 2. **Take screenshots** using the browser tool:
    ```
-   browser_navigate → http://localhost:3000/<path>
+   browser_navigate → <repository-defined-local-url>/<path>
    browser_vision → capture screenshot
    ```
    Note the `screenshot_path` in the output (e.g., `/home/ariefgp/.hermes/cache/images/img_xxx.jpg`).
@@ -140,10 +125,12 @@ gh pr view <PR_NUMBER> --repo Premier-platform/premier-core --json statusCheckRo
 
 6. **If native inline upload is blocked** by SSO, authentication, permissions, or tooling, do not mark the issue `review ready`. Keep the persisted files, report the exact blocker, and move to `need confirmation` so a human/authorized session can upload them. GitHub release assets are not an accepted fallback unless the final issue/PR comment has been visually verified to render them inline.
 
-7. **Kill the dev server** when done:
-   ```bash
-   kill $(lsof -ti:3000) 2>/dev/null
-   ```
+7. **Stop only the harness-owned dev-server cgroup.** Gracefully stop the tracked
+   heavy-wrapper session so the wrapper kills its contained descendants before
+   releasing the heavy lease. Restart recovery must target the recorded cgroup,
+   never a numeric process group or port-wide match. Verify the owned cgroup
+   and its listeners are gone. Never kill processes merely because they listen
+   on a commonly used port.
 
 ### Screenshot checklist
 - [ ] Primary page/flow being tested
@@ -170,16 +157,18 @@ If rendered UI evidence cannot be captured or inspected, do **not** mark the iss
 
 When any agent (Dev or QA) starts any local dev server, preview server, test server, or browser process for Playwright QA or development, the agent MUST stop it before finishing the run AND before transitioning the issue out of their active state label (`in progress` → `qa ready`, or `qa in progress` → `review ready`/`feedback`). This includes `npm`/`pnpm`/`yarn dev`, Vite, Next.js, preview/serve commands, Playwright browsers, and any child process started only for the run.
 
-**8 GB VPS resource rule:** never keep a manually started dev server running while Playwright starts its configured `webServer` stack, while `next build` runs, or while another browser-test stack runs. Stop the manual server first. Playwright may start the app and auth servers required by one test run, but no third/manual server may coexist. Capture root PIDs, clean the full process tree after failure/timeout and before retrying, and verify both the process list and listening ports—Next.js children can survive after their original shell exits.
+**Host resource rule:** never keep a manually started dev server running while Playwright starts its configured `webServer` stack, while a build runs, or while another browser-test stack runs. Stop the manual server first. A repository's test configuration may start the services required by one test stack, but no additional manual server may coexist. Run every such command through `$LOOP_HARNESS_HEAVY`, retain its tracked execution handle and recorded identity, and clean only its harness-owned cgroup after failure/timeout and before retrying. Verify both the owned process identities and listening ports. A surviving listener is evidence to investigate, not permission to kill by port.
 
 Required cleanup steps before label transition or final response:
 - Stop the server/process that the agent started, preferring graceful termination first.
-- **Remove any worktree** created for the issue if the issue is no longer in an active state (`in progress` or `qa in progress`). Worktrees for issues that moved to `qa ready`, `review ready`, `feedback`, or `need confirmation` should be removed — the next agent who picks it up will create their own.
+- Remove disposable build/cache output and leave the source tree clean. Do not remove the dispatcher-owned worktree; the dispatcher verifies and deletes it after terminal completion.
 - Verify no orphan dev server, Playwright, browser, or project-scoped Node process remains from the run.
 - If the agent reused a pre-existing shared server, do **not** kill it unless the human owner explicitly approves; instead state that it was reused and left running.
 - If process ownership cannot be determined safely, report the blocker instead of killing unrelated user/system processes.
 
-A **workspace cleanup cron** (`~/.hermes/scripts/workspace-cleanup.sh`) runs every 10 minutes and automatically removes worktrees whose issues are no longer `in progress` or `qa in progress`. Agents should clean up proactively, but the cron is a safety net.
+Process and disposable-output cleanup is the active worker's responsibility.
+Worktree removal and reconciliation belong exclusively to the dispatcher after
+the worker is terminal. Do not install or rely on a separate cleanup cron.
 
 ### 3. Regression check
 
@@ -236,20 +225,56 @@ If a label required for a transition is not available in the repository (not cre
 | Only Minor bugs | Remove `qa in progress` → Add `review ready`. Log Minor bugs as follow-up tasks labeled `to be planned`. |
 | Blocking dependency or confirmation need prevents safe QA completion | Remove `qa in progress` → Add `need confirmation` and document the blocker/question |
 
-## Local workspace cleanup (mandatory after label transition)
+## Terminal workspace state (mandatory after label transition)
 
-**After transitioning the issue label from `qa in progress` to `review ready` or `feedback`, Agent QA must clean up the local worktree/clone used for the QA run in the same turn.** This is a hard final step in the QA workflow — not an afterthought, not deferred to the next run.
+After transitioning to `review ready`, `feedback`, or `need confirmation`, post
+exactly one final fenced block for the current run ID across all issue comments.
+Replace zero and every placeholder with the true issue, assigned PR, exact full head SHA, and evidence:
 
-Cleanup steps:
-1. Verify `git status --short` is clean in the worktree.
-2. Verify the branch was pushed to the remote.
-3. Verify the issue/PR has the final QA report, evidence, and useful context posted.
-4. Kill any dev servers, Playwright, or browser processes started during the QA run.
-5. Verify no active agent session or cron job is using the workspace.
-6. Remove the worktree/clone directory.
-7. Confirm disk space is reclaimed.
+```loop-engineering-handoff
+{
+  "schema_version": 1,
+  "run_id": "<run_id>",
+  "role": "qa",
+  "state": "<review ready|feedback|need confirmation>",
+  "issue": 0,
+  "pr_number": 0,
+  "head_sha": "<full-hex-assigned-pr-head-sha>",
+  "evidence": [
+    {"kind": "test", "summary": "<exact commands and results>", "url": "https://github.com/<owner>/<repo>/actions/runs/<run-id>/job/<job-id>"},
+    {"kind": "review", "summary": "<substantive review result>", "url": "https://github.com/<owner>/<repo>/pull/<pr>#pullrequestreview-<id>"},
+    {"kind": "screenshot", "summary": "<rendered state shown>", "url": "https://github.com/user-attachments/assets/<id>"}
+  ]
+}
+```
 
-Do not leave stale worktrees for the next run to trip over. If cleanup cannot be performed (e.g., another session is actively using the workspace), report the blocker and retry cleanup as soon as possible.
+Use exactly those top-level keys and exactly `kind`, `summary`, and `url` in each
+evidence item. All evidence values must be meaningful nonempty strings. URLs must
+be trusted GitHub paths bound to the exact repository/issue/PR/head, or native
+GitHub attachment URLs. Test evidence must be an exact Actions run/job and review
+evidence must use the exact `#pullrequestreview-<id>` anchor; PR pages, `/files`,
+`/checks`, and arbitrary PR subpaths do not qualify. The dispatcher reads artifacts
+back and binds repository, exact assigned head, successful status, URL identity,
+and authenticated author. Reviews must be `APPROVED` or substantive non-blocking
+`COMMENTED`; blocking, dismissed, or trivial reviews fail. A passing `COMMENTED`
+review body must avoid the blocking lexemes checked by the dispatcher (`block`,
+`blocked`, `blocker`, `blocking`, `changes requested`, `do not merge`, `not ready`,
+`must fix`, `reject`, and `rejected`) even in negated phrases such as “no blockers”;
+state a positive passing verdict instead. Include all three required kinds, and render every screenshot
+URL as `![descriptive alt](https://github.com/user-attachments/assets/<id>)` in
+the same comment. State, issue, PR, and head must match the sole label and exact
+assigned PR. Prose, stdout, empty evidence, bare screenshot URLs, and duplicate
+blocks do not count. The dispatcher reads every cited artifact back from GitHub:
+an Actions URL's run ID must equal the job's run ID and the fetched
+completed-successful run must match the exact repository and assigned head; the
+submitted review must match the exact repository, PR, head, artifact ID, and
+authenticated author. Missing, stale, unrelated, or wrong-head artifacts fail
+the handoff. Then stop tracked heavy-wrapper sessions, remove disposable
+outputs, and verify the assigned source revision remains clean and unchanged.
+Do not push or remove the worktree. The dispatcher verifies the exact PR head
+after process/cgroup termination and then deletes the workspace. If the tree is
+dirty or the PR head moved, report it; the dispatcher retains recovery evidence
+and fails the run instead of deleting state.
 
 ## Rules
 

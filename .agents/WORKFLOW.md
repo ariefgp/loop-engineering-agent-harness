@@ -21,79 +21,63 @@ feedback          → [Agent Dev] → in progress → qa ready | need confirmati
 - If work becomes blocked or needs human clarification/confirmation, do not leave the task `in progress` or `qa in progress`. Remove the active in-progress label and add `need confirmation` in the same action, then document the blocker clearly in the related channel and GitHub issue comment.
 
 
-## In-progress issue priority rule
+## Resume priority and supplied work
 
-Before picking up any new `todo` or `feedback` issue, Agent Dev MUST first check for any open issue labeled `in progress`. If an `in progress` issue exists:
+The scheduler, not the profile, chooses work. It prioritizes resumable
+`in progress` / `qa in progress` reservations before new `todo`, `feedback`, or
+`qa ready` work. Each profile receives one issue and must not scan for or choose
+a replacement. If the supplied issue is already complete, conflicts with a
+different active owner, or is no longer in the expected state, report the
+inconsistency and stop without taking other work.
 
-1. Verify the issue is not already done — check if the PR is merged, if acceptance criteria are met, or if the work is complete.
-2. Verify no other agent is actively working on it using the claim protocol (see "Issue claiming and staleness"). A fresh claim from another agent means do not interfere; a stale claim or missing claim means the issue is resumable.
-3. If the issue is not done and no other agent is working on it, resume work on that `in progress` issue instead of picking up a new `todo` or `feedback` issue.
-4. Only when there are zero valid `in progress` issues (or the only `in progress` issue is done or being actively worked by another agent) may the agent select a new `todo` or `feedback` issue.
+When QA starts a supplied `qa ready` issue, it removes `qa ready` and adds
+`qa in progress` before detailed review. After QA, it replaces `qa in progress`
+with `review ready`, `feedback`, or `need confirmation` in one verified action.
 
-This prevents stale `in progress` issues from accumulating and ensures interrupted work is resumed before starting new work.
+## Harness reservations and staleness
 
-## QA in-progress priority rule
+GitHub labels remain lifecycle truth. The single-host harness SQLite ledger is
+the authority for concurrent ownership: one active reservation per
+`repository + issue` and one per profile. Claim comments are useful audit text,
+but they are not a compare-and-swap lock.
 
-Before picking up any new `qa ready` issue, Agent QA MUST first check for any open issue labeled `qa in progress`. If a `qa in progress` issue exists:
+The dispatcher holds an OS `flock` only while it refreshes reservations,
+selects work, and commits reservations. It releases that lock before any Hermes
+profile starts. A run heartbeat is persisted while the profile is active.
 
-1. Verify the issue is not already done — check whether the QA report was posted, labels were already transitioned, or the related PR/issue is no longer awaiting QA.
-2. Verify no other QA agent/session is actively working on it using the claim protocol (see "Issue claiming and staleness"). A fresh claim from another QA session means do not interfere; a stale claim or missing claim means the issue is resumable.
-3. If the issue is still awaiting QA and no other QA session is active, resume that `qa in progress` issue instead of picking up a new `qa ready` issue.
-4. Only when there are zero valid `qa in progress` issues may Agent QA select a new `qa ready` issue.
+A reservation is reclaimable only when BOTH are true:
 
-When Agent QA starts a new `qa ready` issue, it MUST immediately remove `qa ready` and add `qa in progress` in the same label action before doing the detailed QA review. After QA is complete, it MUST remove `qa in progress` and add the final result label (`review ready`, `feedback`, or `need confirmation` if blocked by a dependency/confirmation need) in the same label action.
+1. its harness heartbeat is at least **45 minutes** old; and
+2. no matching local process identity (PID plus Linux process start token) is alive.
 
-This prevents multiple QA runs from reviewing the same issue and makes interrupted QA work resumable.
+A dead process with a fresh heartbeat is not stolen early. PID alone is not
+proof of liveness. This v2 protocol is single-host; peer/A2A workers must not
+claim or transition issues until ownership uses a transactional shared lease.
 
-## Issue claiming and staleness
+## Three developer agents (McGee + Torres + Kate)
 
-Labels mark workflow state; claims mark ownership. Determining whether "another agent is actively working" on an issue must use this claim protocol, not guesses from recent comment activity.
+The harness provides three independent Dev lanes:
 
-When an agent starts active work on an issue (adding `in progress` or `qa in progress`), it must claim the issue in the same action:
+- **McGee** — `agent-dev.md`
+- **Torres** — `agent-dev-torres.md`
+- **Kate** — `agent-dev-kate.md`
 
-1. Assign the issue to the agent's GitHub account when possible.
-2. Post a structured claim comment: `CLAIMED by <agent-name> (<engine: claude-code | openclaw-fallback>) at <ISO-8601 UTC timestamp>`.
-
-Staleness rule: a claim is **stale** when the claiming agent has produced no new commits, comments, or label changes on the issue/PR for **2 hours**.
-
-- Fresh claim from another agent → do not interfere; report and stop.
-- Stale claim, or an `in progress` / `qa in progress` issue with no claim comment at all → the issue is resumable. The resuming agent posts its own claim comment before continuing work.
-- Any label transition out of `in progress` / `qa in progress` releases the claim — the new state label supersedes it.
-
-## Two developer agents (McGee + Torres)
-
-Premier Core runs **two** dev agents in parallel on the `todo`/`feedback` queue:
-
-- **McGee** — `agent-dev.md`, claim format `CLAIMED by Agent Dev …`.
-- **Torres** — `agent-dev-torres.md`, claim format `CLAIMED by Agent Dev Torres …`.
-
-Rules:
-
-1. **Distinct claim identity is the ownership signal.** The agent named in the claim comment owns the issue. `CLAIMED by Agent Dev` = McGee; `CLAIMED by Agent Dev Torres` = Torres.
-2. **Never work the same issue simultaneously.** Before claiming a `todo`/`feedback` issue, each dev reads its comments. A fresh claim from the *other* dev means skip it and pick another.
-3. **Resume-your-own before starting new.** Each dev first checks for its own unfinished `in progress` issues (fresh own claim, or unclaimed/stale) and resumes those before picking new work. A fresh claim from the *other* dev is not the current dev's blocker.
-4. **Worktree isolation.** Each dev creates its own `git worktree` with a unique path (Torres prefixes `torres-`) and unique branch name. They must never share a worktree or checkout the same branch.
-5. **One PR per issue.** If the other dev already has an open PR for an issue, do not open a competing PR — skip it unless the issue is stale/unclaimed.
-6. **Process isolation.** Devs may each own separate processes/worktrees, but the 8 GB host dispatcher runs engineering agents sequentially. An agent must not start while another engineering agent is active, and must not reuse or kill another agent's processes without cause (see the process-level one-task guard).
-
-The dispatcher may assign up to two `dev` issues per tick (McGee first, Torres second), but executes them sequentially under a global one-agent resource cap.
+Each profile receives at most one issue. The same `repository + issue` cannot
+be reserved twice. Resume work sorts ahead of new work, then priority, oldest
+GitHub issue `updatedAt` value (the v2 fallback age), repository, and issue
+number determine order. `updatedAt` is not an exact state-entry timestamp:
+comments and unrelated issue edits can refresh it. Every Dev uses a unique
+branch/worktree and verifies that no competing PR exists.
 
 ## Two QA agents (Jimmy + Ducky)
 
-Premier Core has **two QA identities** for the `qa ready` queue, executed sequentially by the dispatcher:
+The harness provides two independent QA lanes. They follow the same reservation
+rules, test the exact PR head, use distinct worktrees, and publish independent
+evidence before changing lifecycle state.
 
-- **Jimmy** — `agent-qa.md`, claim format `CLAIMED by Agent QA …`.
-- **Ducky** — `agent-qa-ducky.md`, claim format `CLAIMED by Agent QA Ducky …`.
-
-Rules (mirror the two-dev rules):
-
-1. **Distinct claim identity is the ownership signal.** `CLAIMED by Agent QA` = Jimmy; `CLAIMED by Agent QA Ducky` = Ducky.
-2. **Never QA the same issue simultaneously.** Read the issue comments before claiming; a fresh claim from the *other* QA means skip and pick another.
-3. **Resume-your-own before starting new.** Each QA first resumes its own unfinished `qa in progress` issues (fresh own claim, or unclaimed/stale). A fresh claim from the *other* QA is not the current QA's blocker.
-4. **One QA report per PR.** If the other QA already has an open review on a PR, do not open a competing review — skip unless stale/unclaimed.
-5. **Worktree + process isolation.** Each QA creates its own worktree (Ducky prefixes `ducky-`) and must not reuse or kill the other's dev server/processes.
-
-The dispatcher may assign up to two `qa` issues per tick (Jimmy first, Ducky second), but executes them sequentially under the same global one-agent resource cap.
+All six profiles may perform lightweight work concurrently. Installs, builds,
+dev servers, browser tests, Playwright, Docker, and local Supabase must run via
+`$LOOP_HARNESS_HEAVY <command>` so only heavy host work is serialized.
 
 ## Feedback cycle limit (circuit breaker)
 
@@ -105,112 +89,131 @@ The dev↔QA loop must not ping-pong indefinitely on the same issue. A "feedback
 
 This caps the budget an issue can burn without human intervention and surfaces systematically failing work instead of letting it loop silently.
 
-## CLI execution model
+## Hermes-native execution model
 
-Agents run as **Claude Code CLI** non-interactive sessions invoked by OpenClaw cron jobs.
-The `.agents/` files are the single source of truth for agent instructions — the cron
-payload is a thin wrapper that tells Claude Code to read these files and execute.
+The deterministic Python harness scans GitHub and launches persistent Hermes
+profiles directly. No coding CLI subprocess is part of the harness path.
 
-### Invocation pattern
-
-```
-claude -p \
-  --model <model> \
-  --permission-mode auto \
-  --output-format json \
-  --add-dir <repo-path> \
-  "<prompt>"
-```
-
-The prompt instructs Claude Code to:
-1. Read `.agents/WORKFLOW.md` and the agent-specific `.agents/agent-<role>.md`
-2. Read `AGENTS.md` for project conventions
-3. Execute the recurring task defined in the agent file
-
-### Model assignments
-
-| Agent     | Model  | Rationale                                    |
-| --------- | ------ | -------------------------------------------- |
-| Agent PM  | opus   | Deep reasoning for specs, edge cases, deps  |
-| Agent Dev | sonnet | Fast, capable implementation and git work   |
-| Agent QA  | opus   | Deep code review, testing, and bug reporting |
-
-### Cron wrapper architecture
-
-OpenClaw cron jobs fire isolated sessions with `lightContext: true` and a minimal
-prompt. The isolated session runs a pre-check gate first, then uses Claude Code
-when there is actual work. Claude Code is always the first-priority execution
-engine. If Claude Code is unavailable — for example the `claude` command is
-missing, returns an execution error, authentication error, rate-limit/quota error,
-or otherwise cannot start/complete the task — the cron session MUST continue the
-same task using the existing OpenClaw model/session instead of stopping.
-
-```
-OpenClaw cron (every N min)
-  → isolated session (lightContext, tiny prompt)
-    → pre-check gate: gh CLI checks for eligible trigger-label issues
-      → no eligible issues → NO_REPLY (no claude invoked, no quota used)
-      → eligible issues found → try exec: claude -p --model <model> --add-dir <repo> "<task prompt>"
-        → success: Claude Code reads .agents/ files, does all real work
-        → unavailable/error/rate-limited: fall back to the existing OpenClaw model/session
-          → OpenClaw model reads the same .agents/ files and executes the same task directly
-      → return the completed work summary, regardless of engine used
-  → announce to Telegram (delivery)
+```text
+python -m loop_harness tick
+  → read-only GitHub scan
+  → deterministic queue ordering
+  → short local claim lock + SQLite reservations
+  → gibbs/mcgee/torres/kate/jimmy/ducky profile processes
+  → concurrent lightweight work
+  → one shared heavy-command lease
+  → atomic result summaries for reconciliation
 ```
 
-Fallback rules:
-- Priority 1 is always Claude Code.
-- Priority 2 is the existing OpenClaw model/session, used only when Claude Code is not available or cannot complete because of tool/runtime/auth/rate-limit/quota errors.
-- The fallback model must follow the same `.agents/WORKFLOW.md`, agent-specific file, `AGENTS.md`, label rules, GitHub updates, QA evidence requirements, and cleanup requirements.
-- Do not skip eligible work solely because Claude Code is temporarily unavailable.
-- If both Claude Code and the OpenClaw fallback are blocked, report the blocker clearly instead of silently failing.
+The profile invocation is an argument vector, never a shell string:
 
-### Pre-check gate (quota savings)
+```text
+<profile> chat --query-file - --oneshot -Q --in <repo-path> --run-budget 2700
+```
 
-Every cron-run agent MUST perform a lightweight pre-check before invoking
-`claude -p`. The pre-check uses the `gh` CLI (or equivalent GitHub API call)
-to determine whether any eligible trigger-label issues exist. If none are
-found, the session returns `NO_REPLY` immediately without spawning Claude Code.
+The bounded task envelope is sent on stdin. Each profile reads its own persistent
+memory plus `.agents/WORKFLOW.md`, its role contract, and project context files.
+The dispatcher never changes lifecycle labels; the selected profile performs
+and verifies transitions under this contract.
 
-This avoids burning Claude Code subscription quota on no-op runs.
+### Durable run-linked handoff
 
-Pre-check steps per agent:
+Before reporting successful completion, post exactly one fenced handoff block for
+the current run ID across all comments on the issue. Replace every placeholder with the true value
+and do not add or omit keys:
 
-| Agent     | Pre-check query                                               |
-| --------- | ------------------------------------------------------------ |
-| Agent PM  | `gh issue list --label "to be planned" --state open`        |
-| Agent Dev | `gh issue list --label "in progress" --state open` (guard), then `gh issue list --label "todo" --state open` and `gh issue list --label "feedback" --state open` |
-| Agent QA  | `gh issue list --label "qa in progress" --state open` (resume guard), then `gh issue list --label "qa ready" --state open` |
+```loop-engineering-handoff
+{
+  "schema_version": 1,
+  "run_id": "<run_id>",
+  "role": "<pm|dev|qa>",
+  "state": "<terminal-state>",
+  "issue": 0,
+  "pr_number": null,
+  "head_sha": null,
+  "evidence": [
+    {"kind": "<kind>", "summary": "<substantive result>", "url": "https://github.com/<durable-evidence>"}
+  ]
+}
+```
 
-If the Agent Dev guard query returns results (an `in progress` issue exists), the cron session still invokes Claude Code so the global in-progress guard can run: Agent Dev verifies whether the issue is done (repairs the handoff), actively claimed by another agent (reports and stops), or resumable (resumes it). It must not start a new `todo`/`feedback` issue while a valid `in progress` issue exists. If the Agent QA guard query returns results (`qa in progress` exists), Agent QA resumes the oldest valid QA-in-progress issue instead of starting a new `qa ready` issue.
+The top-level object must contain exactly those keys. Each evidence object must
+contain exactly `kind`, `summary`, and `url`, all meaningful nonempty strings.
+Each URL must be a trusted GitHub URL bound to the exact repository, issue, PR,
+or head (or a native GitHub attachment). Dev verification requires an exact
+Actions run/job or documented PR verification comment. QA test evidence requires
+an exact Actions run/job, and QA review evidence requires the exact
+`#pullrequestreview-<id>` anchor. Plain PR pages, `/files`, `/checks`, and arbitrary
+PR subpaths do not qualify. Every artifact is read back from GitHub and must match
+the exact repository, revision, authenticated author, status, and URL identity.
+PM evidence must be the exact issue comment containing the run identity and
+substantive plan/blocker content. QA reviews must be `APPROVED` or substantive,
+non-blocking `COMMENTED`; blocking, dismissed, or trivial reviews do not qualify.
+Dev blocker evidence must be an exact `#issuecomment-<id>` URL: unchanged source
+uses a comment on the assigned issue, while changed source uses a comment on the
+exact closing PR. The dispatcher reads that comment through the host-pinned API
+and requires its ID, HTML URL, repository, issue/PR number, authenticated author,
+run ID, blocker content, and evidence summary to match. A bare issue/PR page or a
+missing, mismatched, or unrelated comment does not qualify.
+The run ID, role, issue, and state must
+match the assignment and the issue's sole final state label. PM uses JSON `null`
+for PR/head and includes `plan`, or `blocker` for `need confirmation`. Dev normally
+uses the current closing PR number and full pushed head SHA with `verification`;
+`need confirmation` requires `blocker`. Unchanged Dev source may use JSON `null`
+for PR/head and create no PR/push, while changed source requires the exact assigned
+branch pushed and one open closing PR. QA uses the assigned closing PR number
+and exact full head SHA and includes kinds `test`, `review`, and `screenshot`.
+The dispatcher reads every cited artifact back from GitHub: an Actions URL's run
+ID must equal the job's run ID and the fetched completed-successful run must match
+the exact repository and assigned head; reviews and verification comments must
+match the exact repository, PR, head, artifact ID, and authenticated author, with
+the review submitted. Missing, stale, unrelated, or wrong-head artifacts fail.
+Every QA screenshot URL must also appear as an inline Markdown image in that same
+comment. Worker stdout, prose outside the block, empty evidence, or more than one
+handoff block is never proof. The dispatcher retains the workspace and fails a
+completed run when any field or durable GitHub evidence does not match.
 
-Token cost: No-op runs cost only a GitHub API call. Real work runs use the
-Claude Code subscription — separate quota.
+### Pre-check and scheduling
 
-### Permissions
+`gh issue list` is executed before any profile starts. Empty queues use no model.
+GitHub authentication/API failures fail the tick visibly and dispatch nothing.
+Candidates are deduplicated by `repository + issue`, and invalid or competing
+reservations are excluded before launch.
 
-Claude Code runs with `--permission-mode auto` which auto-accepts file and bash
-operations within the workspace. Agents must still follow the hard constraints
-defined in their `.agents/agent-<role>.md` files (never merge, never push to
-main directly, only implement acceptance criteria, etc.).
+### Cron activation
+
+Do not install the live ten-minute cron until shadow mode and a one-PM/one-Dev/
+one-QA canary pass. The cron invokes the script directly in no-agent mode; it
+does not create six independent polling crons.
+
+### Peer, A2A, Bot Mode, and Telegram
+
+GitHub is the engineering handoff and lifecycle authority. Local Bot Mode,
+`hermes peer`, and A2A may carry consultation or status envelopes only. They
+must not claim or transition issues in v2. Telegram is presentation-only:
+Telegram does not deliver bot-authored messages to other bots, so agents must
+never depend on observing another bot's group message.
 
 ### Portability and host configuration
 
-These files always refer to exactly one repository: **the repository that contains this `.agents/` directory** (the "target repo"). Placeholders used throughout the files are supplied by the host project's cron wrapper/prompt:
+These files always refer to exactly one repository: **the repository that contains this `.agents/` directory** (the "target repo"). Placeholders used throughout the files are supplied by the harness task envelope or target-repository context:
 
-- `<owner>/<repo>` — the GitHub slug of the target repo (used in `gh --repo` pre-check commands).
+- `<owner>/<repo>` — the GitHub slug of the target repo.
 - `<repo-path>` — the local checkout path of the target repo.
 - `<notes-repo-local-path>` / `<notes-repo-url>` — optional companion notes repository for project context. Skip notes steps if not configured.
 - `<runtime-env-file-path>` — optional local runtime env file for env-dependent tests. Report a blocker if required but not configured.
 
 To reuse this workflow in another repo:
-1. Copy the `.agents/` directory (WORKFLOW.md, agent-pm.md, agent-dev.md, agent-qa.md)
-2. Supply concrete values for the placeholders above in the cron wrapper/prompt, and adjust any project-specific conventions
-3. Set up cron jobs pointing to the new repo path with the same wrapper pattern
+1. Byte-synchronize all seven contracts: `WORKFLOW.md`, `agent-pm.md`, `agent-dev.md`, `agent-dev-torres.md`, `agent-dev-kate.md`, `agent-qa.md`, and `agent-qa-ducky.md`. Shadow and live ticks must fail before reservation if an applicable target contract is missing or stale.
+2. Supply concrete values for the placeholders above in harness configuration/task context, and keep project-specific conventions in the target repository's `AGENTS.md`/`CLAUDE.md`.
+3. After the shadow → one-PM/one-Dev/one-QA canary succeeds, install one dispatcher cron using the wrapper; configure repositories in the harness rather than creating per-repository or per-profile polling crons.
 
 ## PR and issue linking
 
-Every PR must explicitly link its related GitHub issue in the PR body. Use a full issue URL or GitHub closing/reference keyword such as `Fixes #<issue-number>`, `Closes #<issue-number>`, or `Related issue: <full URL of the issue in this repository>`.
+Every PR must explicitly link its related GitHub issue in the PR body with a
+GitHub closing keyword such as `Fixes #<issue-number>` or
+`Closes #<issue-number>`. A pasted issue URL, `Related issue`, title, branch name,
+or comment is not a closing relationship and does not satisfy this contract.
 
 If a PR is a follow-up, feedback fix, supplement, or stack on another PR, the PR body must also link the related parent/older PR. The related issue body should include a `Related PRs` section when multiple active PRs belong to the same issue.
 
@@ -234,17 +237,29 @@ All agents must use real application data for development, testing, and QA acros
 - Agent QA must verify pages against real application data from the database/API. If the needed data is unavailable, QA must seed the database before testing when safe and supported by the project. If seeding is not possible, QA must mark the test as blocked/feedback instead of passing with static data.
 - Any seeded test data must be documented in the issue/PR QA notes, including what was seeded, how it was seeded, and how another agent can reproduce it.
 
-### Vercel preview = real data source
+### Repository-defined environments, CI, deployments, and credentials
 
-This repo has **full integration env vars** configured as GitHub secrets (`SUPABASE_SECRET_KEY`, `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `RESEND_API_KEY`, etc.). Every PR deploys to a Vercel preview with these env vars live.
+Do not assume that a target uses a particular hosting provider, creates preview
+deployments, runs E2E in CI, or exposes any credential or secret. Determine the
+available and required verification paths from that target's `AGENTS.md`/
+`CLAUDE.md`, issue acceptance criteria, repository workflows, and PR checks.
 
-**"No local env" is NOT a valid reason to skip real-data QA.** When `.env.local` is missing:
-1. Test against the Vercel preview URL (get it via `gh pr view <PR> --json statusCheckRollup --jq '.statusCheckRollup[] | select(.name == "Vercel") | .targetUrl'`).
-2. If the preview is SSO-protected, check CI Playwright E2E results (`gh run list`).
-3. If CI E2E passes with full env injected, that counts as real-data verification.
-4. Only mark `need confirmation` for env if BOTH preview AND CI are inaccessible.
+- Use a local, staging, preview, or CI environment only when the target contract
+  or observable repository/PR context defines it and access is authorized.
+- Treat CI as evidence only for the exact PR head and only for checks whose
+  logs/artifacts prove the acceptance criterion. CI does not replace required
+  rendered, interactive, negative-case, or real-data verification.
+- Treat a preview deployment as evidence only after verifying its exact PR/head,
+  configuration, data source, and accessibility. A successful deployment check
+  alone is not functional proof.
+- Use credentials only through the target's approved mechanism. Never infer
+  secret availability from another repository, guess values, or expose values.
+- If a required environment, check, deployment, or credential is absent or
+  inaccessible, record the exact attempted evidence and move to `feedback` or
+  `need confirmation` as appropriate; never downgrade or fabricate verification.
 
-See `.agents/agent-qa.md` "Vercel preview testing" for the full procedure.
+See `.agents/agent-qa.md` "Repository-defined remote verification" for the full
+procedure.
 - Do not mark an issue `review ready` based only on static screenshots, hardcoded page states, mocked fixture data, Storybook-only views, or local-only fake data unless the issue is explicitly scoped to that isolated fixture and the human owner approves that exception.
 
 ## Active ticket dependency check
@@ -354,12 +369,12 @@ After each action on an issue, including the initial QA transition from `qa read
 ### QA screenshot evidence
 
 Agent QA must include screenshots in every QA report, regardless of task type. For local-dev testing:
-1. Start the dev server: `npm run dev &` — wait for it to be ready
+1. Start the repository-defined dev server through `$LOOP_HARNESS_HEAVY <command>` in a tracked background execution session (never with an untracked shell `&`), record the wrapper PID/process identity, and wait for the repository-defined readiness signal.
 2. Navigate to relevant pages using the browser tool and capture screenshots
 3. Upload every screenshot to the issue/PR as an inline-rendered GitHub image and visually verify that it renders in the comment
 4. Reject local paths, bare URLs, ordinary links, and download-only release assets as QA evidence
 5. If inline upload is blocked, move to `need confirmation` rather than `review ready`
-6. Kill the dev server when done: `kill $(lsof -ti:3000) 2>/dev/null`
+6. Stop the tracked wrapper gracefully so it kills its harness-owned cgroup before releasing the heavy lease. Recovery cleanup must target that recorded cgroup, never a numeric process group or every listener on a port. Verify its processes and listeners are gone.
 
 Screenshots are mandatory evidence — not optional. See `.agents/agent-qa.md` for the full screenshot checklist and workflow.
 
@@ -370,23 +385,24 @@ Screenshots are mandatory evidence — not optional. See `.agents/agent-qa.md` f
 | Agent QA  | qa in progress (resume), qa ready (new) | review ready, feedback, or need confirmation |
 
 
-## Local workspace cleanup at handoff
+## Dispatcher-owned worktrees and cleanup
 
-Local clones and worktrees are disposable once the canonical work is safe on the remote. **Cleanup happens at handoff** — the moment an issue is moved to `qa ready`, `need confirmation`, `review ready`, or `feedback`, the owning agent must clean up its local workspace in the same turn, not later.
+Every run starts in a unique worktree created by the dispatcher at an immutable
+source revision. The supplied path and branch are authoritative. Workers must
+not create, move, switch, reset, or remove worktrees or branches, check out
+`main`, or alter/restore the shared control checkout.
 
-Cleanup steps at handoff (`qa ready`, `need confirmation`, `review ready`, or `feedback`):
+Before handoff, the worker must stop its tracked processes, remove disposable
+build output, leave the source tree clean, and write all required GitHub state
+and evidence. Dev must commit and push every source change to the exact assigned
+remote branch; PM and QA must leave the assigned revision unchanged and must not
+push source changes. The dispatcher waits for process/cgroup termination, then
+verifies the remote branch and GitHub handoff against local `HEAD` before
+deleting the clean worktree and private refs. Dirty or unpublished Dev state is
+retained as recovery evidence and the run fails rather than destroying work.
 
-1. Verify `git status --short` is clean, or remaining files are only disposable build/cache output.
-2. Verify the branch was pushed to the appropriate remote(s).
-3. Verify the PR/MR or issue has the final useful context, screenshots, logs, notes, and verification evidence.
-4. Remove the worktree: `git worktree remove <worktree-path>` (or `git worktree prune` if already deleted).
-5. Delete bulky generated folders from the worktree before removal if not already done: `node_modules`, `.next`, build outputs, caches, temp dirs.
-6. Verify no temporary dev/test server process was left behind by this run. Stop any `next-server`, Playwright, or npm child process started for verification.
-7. Confirm disk space is reclaimed after cleanup.
-
-Do not keep completed worktrees around "in case QA sends feedback." If feedback comes later, create a fresh worktree from the PR branch at that time.
-
-Keep only the smallest canonical checkout (main branch) needed for the next run. Do not delete another agent's active workspace without checking its current session/cron status.
+Feedback and resumed runs receive a new dispatcher-owned worktree pinned to the
+exact related PR head. No worker may delete or modify another run's workspace.
 
 ## Completion
 

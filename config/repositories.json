@@ -1,0 +1,28 @@
+{
+  "repositories": [
+    {
+      "slug": "Premier-platform/premier-core",
+      "path": "/home/ariefgp/repos/premier-core",
+      "enabled": true,
+      "roles": ["pm", "dev", "qa"]
+    },
+    {
+      "slug": "Codekarsa/simplicityAI-core",
+      "path": "/home/ariefgp/repos/simplicityAI-core",
+      "enabled": true,
+      "roles": ["pm", "dev", "qa"]
+    },
+    {
+      "slug": "Codekarsa/pitipal",
+      "path": "/home/ariefgp/repos/pitipal",
+      "enabled": false,
+      "roles": ["pm", "dev", "qa"]
+    },
+    {
+      "slug": "Codekarsa/pomofly",
+      "path": "/home/ariefgp/repos/pomofly",
+      "enabled": false,
+      "roles": ["pm", "dev", "qa"]
+    }
+  ]
+}

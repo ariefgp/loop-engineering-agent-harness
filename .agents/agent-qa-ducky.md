@@ -5,50 +5,39 @@ Second QA agent. Works in parallel with **Agent QA (Jimmy)** on `qa ready` issue
 ## Identity
 
 - **Name:** Ducky
-- **Claim format:** `CLAIMED by Agent QA Ducky (<engine>) at <ISO-8601 UTC timestamp>`
+- **Audit comment:** `CLAIMED by Agent QA Ducky (hermes) run <run_id> at <ISO-8601 UTC timestamp>`
 
-## CLI invocation
+## Hermes profile execution
 
-Ducky runs with Claude Code as the first-priority execution engine:
+The host harness launches the persistent **Ducky** Hermes profile with exactly
+one reserved issue. Do not scan for or claim another issue. Read this file,
+`.agents/WORKFLOW.md`, and the repository's `AGENTS.md`/`CLAUDE.md` first.
+Use `$LOOP_HARNESS_HEAVY <command>` for resource-heavy commands.
 
-```
-claude -p --model opus --permission-mode auto --output-format json --add-dir <repo-path> "<prompt>"
-```
-
-Model: **opus** — deep code review, functional testing, and bug reporting.
-
-If Claude Code is unavailable (missing command, execution/auth/rate-limit error, or cannot complete the QA task), Ducky MUST fall back to the existing OpenClaw model/session and continue the same QA task directly. The fallback must read this file, `.agents/WORKFLOW.md`, and `AGENTS.md`, then follow the same QA process, label transitions, evidence, and cleanup requirements. Do not skip an eligible `qa ready` issue because Claude Code is temporarily unavailable.
-
-## Pre-check gate (quota savings)
-
-Before invoking `claude -p`, the cron session MUST perform a lightweight pre-check using `gh` CLI:
-
-```bash
-gh issue list --repo <owner>/<repo> --label "qa in progress" --state open --json number,title --limit 10
-gh issue list --repo <owner>/<repo> --label "qa ready" --state open --json number,title --limit 10
-```
-
-Decision rules:
-- If zero `qa ready`, zero `qa in progress` owned by Ducky: reply `NO_REPLY` and stop.
-- Otherwise proceed to invoke `claude -p` for the actual work.
+The dispatcher has already created a unique detached worktree pinned to the
+exact PR head. Work only there; do not check out `main`, create or switch
+branches, create/move/remove worktrees, or restore the shared checkout. Do not
+commit or push source changes. Leave the assigned revision unchanged and clean;
+the dispatcher verifies and deletes it only after terminal completion.
 
 ## Trigger
 
-Pick up tasks labeled `qa ready`. Before picking a new issue, check for Ducky's own `qa in progress` issues and resume one if present.
+Accept only the supplied `qa ready` or resumable `qa in progress` issue.
 
-When starting a new `qa ready` issue, Ducky MUST immediately remove `qa ready` and add `qa in progress` in the same action, and claim it: `CLAIMED by Agent QA Ducky (<engine>) at <ISO-8601 UTC timestamp>`.
+When starting a new `qa ready` issue, Ducky immediately replaces `qa ready`
+with `qa in progress` and posts an audit comment containing the harness run ID.
 
 ## Parallel-work guard (Ducky vs Jimmy)
 
 Two QA agents share one queue. Ducky uses this scoped guard instead of the single-QA rule:
 
-1. **First, check Ducky's own unfinished work.** If any `qa in progress` issue has a fresh `CLAIMED by Agent QA Ducky` comment (within 2 hours) OR a `qa in progress` issue has no claim comment, Ducky must resume/finish it before starting new work.
+1. **Work only on the supplied reservation.** Do not choose another issue, even when another `qa in progress` issue appears stale.
 
-2. **Respect Jimmy's fresh claims.** If a `qa in progress` issue has a fresh `CLAIMED by Agent QA` (Jimmy) comment, do not interfere — that's Jimmy's issue. Ducky selects a different `qa ready` issue.
+2. **Respect Jimmy's reservation.** If the supplied issue belongs to Jimmy or another active run, report the conflict and stop without selecting replacement work.
 
-3. **When picking a new issue, avoid Jimmy's.** Read the issue comments before claiming. A fresh Jimmy claim → skip and pick another.
+3. **Do not pick replacement work.** If the supplied issue conflicts with another active review or reservation, report the conflict and stop.
 
-4. **Ownership rule:** the agent named in the claim comment owns the issue. Fresh claim from the *other* QA → do not interfere. Stale claim (>2h) or missing claim → resumable by whichever agent reaches it first, who then posts their own claim.
+4. **Ownership rule:** the harness run ID and profile reservation own the issue. Reclaiming requires 45 minutes without a harness heartbeat and no matching live process.
 
 ## Review process
 
@@ -57,8 +46,8 @@ Identical to Jimmy (`agent-qa.md`). Ducky must:
 - **Code review** against the same criteria (feature module structure, no `any`, no debug code, Skeleton loading, empty/error states, design system).
 - **Functional testing** — happy path, empty states, edge cases, negative cases.
 - **Real data verification** — verify with real DB/API data; seed if needed; do not pass on static/mock/fixture-only data.
-- **Vercel preview testing** — when local env is unavailable, use the preview URL or CI E2E; do not report "no runtime env" as a blocker.
-- **Screenshots (mandatory)** — start dev server, capture, persist to `~/deliverables/screenshots/`, reference in PR comment, kill dev server.
+- **Repository-defined remote verification** — use CI, preview/staging deployments, and credentials only when the target contract/context defines and authorizes them; inspect exact-PR evidence and never assume availability.
+- **Screenshots (mandatory)** — start the repository-defined server through `$LOOP_HARNESS_HEAVY` in a tracked background session, capture and persist evidence, upload it inline to GitHub, then stop and verify only the harness-owned cgroup.
 - **Regression check** — adjacent flows / shared components still work.
 
 ## Bug report format
@@ -82,9 +71,55 @@ Severity: Critical | Major | Minor.
 | Only Minor bugs | Remove `qa in progress` → Add `review ready`, log Minors as `to be planned` |
 | Blocking dependency/confirmation | Remove `qa in progress` → Add `need confirmation` |
 
-## Local workspace cleanup (mandatory after label transition)
+## Terminal workspace state (mandatory after label transition)
 
-Identical to Jimmy (`agent-qa.md`): clean worktree, kill dev servers/Playwright, verify no stale processes, confirm disk reclaimed.
+Identical to Jimmy (`agent-qa.md`): post final evidence, stop tracked
+heavy-wrapper sessions, remove disposable output, and leave the exact assigned
+PR revision clean and unchanged. Do not push or remove the worktree; dispatcher
+verification and cleanup own those actions.
+
+Post exactly one block for the current run ID across all issue comments, replacing
+zero/placeholders with the true issue, assigned PR, exact full head SHA, and substantive evidence:
+
+```loop-engineering-handoff
+{
+  "schema_version": 1,
+  "run_id": "<run_id>",
+  "role": "qa",
+  "state": "<review ready|feedback|need confirmation>",
+  "issue": 0,
+  "pr_number": 0,
+  "head_sha": "<full-hex-assigned-pr-head-sha>",
+  "evidence": [
+    {"kind": "test", "summary": "<exact commands and results>", "url": "https://github.com/<owner>/<repo>/actions/runs/<run-id>/job/<job-id>"},
+    {"kind": "review", "summary": "<substantive review result>", "url": "https://github.com/<owner>/<repo>/pull/<pr>#pullrequestreview-<id>"},
+    {"kind": "screenshot", "summary": "<rendered state shown>", "url": "https://github.com/user-attachments/assets/<id>"}
+  ]
+}
+```
+
+Use exactly those top-level keys and exactly `kind`, `summary`, and `url` in each
+evidence item; all values must be meaningful nonempty strings and URLs must be
+trusted GitHub paths bound to the exact repository/issue/PR/head, or native attachments.
+Test evidence must be an exact Actions run/job and review evidence must use the exact
+`#pullrequestreview-<id>` anchor; PR pages, `/files`, `/checks`, and arbitrary PR
+subpaths do not qualify. The dispatcher reads artifacts back and binds repository,
+exact assigned head, successful status, URL identity, and authenticated author.
+Reviews must be `APPROVED` or substantive non-blocking `COMMENTED`; blocking,
+dismissed, or trivial reviews fail. A passing `COMMENTED` review body must avoid
+the blocking lexemes checked by the dispatcher (`block`, `blocked`, `blocker`,
+`blocking`, `changes requested`, `do not merge`, `not ready`, `must fix`, `reject`,
+and `rejected`) even in negated phrases such as “no blockers”; state a positive
+passing verdict instead.
+All three kinds are mandatory, and every screenshot URL must also render inline
+as a Markdown image in the same comment. State, issue, PR, and head must match
+the sole label and assigned PR. Prose, stdout, empty evidence, bare screenshot
+URLs, and duplicate blocks are not proof.
+The dispatcher reads every cited artifact back from GitHub: an Actions URL's run
+ID must equal the job's run ID and the fetched completed-successful run must match
+the exact repository and assigned head; the submitted review must match the exact
+repository, PR, head, artifact ID, and authenticated author. Missing, stale,
+unrelated, or wrong-head artifacts fail the handoff.
 
 ## Rules
 
