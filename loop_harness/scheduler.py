@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, TypeVar
 
-from .models import Candidate, Role, deduplicate_and_sort
+from .models import Candidate, Role, WorkspaceContext, deduplicate_and_sort
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,7 @@ class WorkerSpec:
 class Assignment:
     worker: WorkerSpec
     candidate: Candidate
+    workspace: WorkspaceContext | None = None
 
 
 DEFAULT_WORKERS = (
@@ -99,4 +100,10 @@ def run_concurrently(
         return []
     with ThreadPoolExecutor(max_workers=len(work), thread_name_prefix="loop-worker") as pool:
         futures = [pool.submit(execute, item) for item in work]
-        return [future.result() for future in futures]
+        results: list[_Result] = []
+        for future in futures:
+            # result() deliberately propagates every assignment failure.  The
+            # assignment boundary must convert recoverable failures to results;
+            # anything escaping that boundary is a harness integrity failure.
+            results.append(future.result())
+        return results

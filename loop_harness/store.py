@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
+import json
 import sqlite3
-import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
@@ -18,24 +18,9 @@ class RunStore:
     def __init__(self, path: Path, *, read_only: bool = False) -> None:
         self.path = path
         self.read_only = read_only
-        self._snapshot: tempfile.TemporaryDirectory[str] | None = None
         if read_only:
             if not path.is_file():
                 raise FileNotFoundError(path)
-            self._snapshot = tempfile.TemporaryDirectory(prefix="loop-harness-shadow-")
-            snapshot_path = Path(self._snapshot.name) / path.name
-            source = sqlite3.connect(
-                f"file:{path.resolve()}?mode=ro",
-                timeout=10,
-                uri=True,
-            )
-            destination = sqlite3.connect(snapshot_path)
-            try:
-                source.backup(destination)
-            finally:
-                destination.close()
-                source.close()
-            self.path = snapshot_path
             return
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
@@ -45,14 +30,12 @@ class RunStore:
         self._initialize()
 
     def close(self) -> None:
-        if self._snapshot is not None:
-            self._snapshot.cleanup()
-            self._snapshot = None
+        return None
 
     def _connect(self) -> sqlite3.Connection:
         if self.read_only:
             connection = sqlite3.connect(
-                f"file:{self.path.resolve()}?mode=ro",
+                f"{self.path.resolve().as_uri()}?mode=ro",
                 timeout=10,
                 isolation_level=None,
                 uri=True,
@@ -61,6 +44,8 @@ class RunStore:
             connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout=10000")
+        if self.read_only:
+            connection.execute("PRAGMA query_only=ON")
         return connection
 
     def _initialize(self) -> None:
@@ -93,6 +78,12 @@ class RunStore:
                 INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', '1');
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(runs)").fetchall()
+            }
+            if "workspace_json" not in columns:
+                connection.execute("ALTER TABLE runs ADD COLUMN workspace_json TEXT")
         try:
             os.chmod(self.path, 0o600)
         except OSError:
@@ -145,6 +136,28 @@ class RunStore:
             if cursor.rowcount != 1:
                 raise KeyError(f"prepared run not found: {run_id}")
 
+    def attach_workspace(self, run_id: str, context: dict[str, object]) -> None:
+        encoded = json.dumps(context, sort_keys=True, separators=(",", ":"))
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE runs SET workspace_json=? WHERE run_id=? AND state IN ('prepared','running')",
+                (encoded, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"active run not found: {run_id}")
+
+    def get_run(self, run_id: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        return dict(row) if row is not None else None
+
+    def stale_run_ids(self) -> list[str]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT run_id FROM runs WHERE state='stale' ORDER BY created_at, run_id"
+            ).fetchall()
+        return [str(row["run_id"]) for row in rows]
+
     def heartbeat(self, run_id: str, at: datetime) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -157,12 +170,30 @@ class RunStore:
             cursor = connection.execute(
                 """
                 UPDATE runs SET state='finished', outcome=?, result_path=?
-                WHERE run_id=? AND state IN ('prepared', 'running')
+                WHERE run_id=? AND state IN ('prepared', 'running', 'stale')
                 """,
                 (outcome, str(result_path) if result_path else None, run_id),
             )
             if cursor.rowcount != 1:
-                raise KeyError(f"active run not found: {run_id}")
+                row = connection.execute(
+                    "SELECT state, outcome, result_path FROM runs WHERE run_id=?", (run_id,)
+                ).fetchone()
+                expected_path = str(result_path) if result_path else None
+                if row is None or (
+                    str(row["state"]), row["outcome"], row["result_path"]
+                ) != ("finished", outcome, expected_path):
+                    raise KeyError(f"active run not found: {run_id}")
+
+    def is_finished(
+        self, run_id: str, outcome: str, result_path: Path | None = None
+    ) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT state, outcome, result_path FROM runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+        return row is not None and (
+            str(row["state"]), row["outcome"], row["result_path"]
+        ) == ("finished", outcome, str(result_path) if result_path else None)
 
     def active_profiles(self) -> set[str]:
         with self._connect() as connection:

@@ -7,6 +7,13 @@ exactly one atomically reserved issue. Do not scan for or claim a second issue.
 Read this file, `.agents/WORKFLOW.md`, and the repository's
 `AGENTS.md`/`CLAUDE.md` before working.
 
+The dispatcher has already created a unique detached worktree pinned to the
+exact PR head. Work only in that supplied path. Do not check out `main`, create
+or switch branches, create/move/remove worktrees, or restore the shared checkout.
+QA must not commit or push source changes and must leave the assigned revision
+unchanged and clean. The dispatcher verifies the PR head and deletes the clean
+worktree after the worker and its cgroup are terminal.
+
 For installs, builds, dev servers, browser tests, Docker, or local Supabase,
 run the command through `$LOOP_HARNESS_HEAVY <command>`. Only one
 heavy command runs on the host at a time while all six profiles may continue
@@ -154,15 +161,14 @@ When any agent (Dev or QA) starts any local dev server, preview server, test ser
 
 Required cleanup steps before label transition or final response:
 - Stop the server/process that the agent started, preferring graceful termination first.
-- **Remove any worktree** created for the issue if the issue is no longer in an active state (`in progress` or `qa in progress`). Worktrees for issues that moved to `qa ready`, `review ready`, `feedback`, or `need confirmation` should be removed — the next agent who picks it up will create their own.
+- Remove disposable build/cache output and leave the source tree clean. Do not remove the dispatcher-owned worktree; the dispatcher verifies and deletes it after terminal completion.
 - Verify no orphan dev server, Playwright, browser, or project-scoped Node process remains from the run.
 - If the agent reused a pre-existing shared server, do **not** kill it unless the human owner explicitly approves; instead state that it was reused and left running.
 - If process ownership cannot be determined safely, report the blocker instead of killing unrelated user/system processes.
 
-Workspace and process cleanup is the responsibility of the active worker, with
-the harness responsible for timeout/interruption cleanup and reconciliation.
-Do not install or rely on a separate cleanup cron; cleanup must complete before
-handoff whenever the worker can safely perform it.
+Process and disposable-output cleanup is the active worker's responsibility.
+Worktree removal and reconciliation belong exclusively to the dispatcher after
+the worker is terminal. Do not install or rely on a separate cleanup cron.
 
 ### 3. Regression check
 
@@ -219,20 +225,52 @@ If a label required for a transition is not available in the repository (not cre
 | Only Minor bugs | Remove `qa in progress` → Add `review ready`. Log Minor bugs as follow-up tasks labeled `to be planned`. |
 | Blocking dependency or confirmation need prevents safe QA completion | Remove `qa in progress` → Add `need confirmation` and document the blocker/question |
 
-## Local workspace cleanup (mandatory after label transition)
+## Terminal workspace state (mandatory after label transition)
 
-**After transitioning the issue label from `qa in progress` to `review ready` or `feedback`, Agent QA must clean up the local worktree/clone used for the QA run in the same turn.** This is a hard final step in the QA workflow — not an afterthought, not deferred to the next run.
+After transitioning to `review ready`, `feedback`, or `need confirmation`, post
+exactly one final fenced block for the current run ID across all issue comments.
+Replace zero and every placeholder with the true issue, assigned PR, exact full head SHA, and evidence:
 
-Cleanup steps:
-1. Verify `git status --short` is clean in the worktree.
-2. Verify the branch was pushed to the remote.
-3. Verify the issue/PR has the final QA report, evidence, and useful context posted.
-4. Stop the tracked heavy-wrapper sessions and verify their owned cgroups and listeners are gone; never kill by port or broad process-name match.
-5. Verify no active agent session or cron job is using the workspace.
-6. Remove the worktree/clone directory.
-7. Confirm disk space is reclaimed.
+```loop-engineering-handoff
+{
+  "schema_version": 1,
+  "run_id": "<run_id>",
+  "role": "qa",
+  "state": "<review ready|feedback|need confirmation>",
+  "issue": 0,
+  "pr_number": 0,
+  "head_sha": "<full-hex-assigned-pr-head-sha>",
+  "evidence": [
+    {"kind": "test", "summary": "<exact commands and results>", "url": "https://github.com/<owner>/<repo>/actions/runs/<run-id>/job/<job-id>"},
+    {"kind": "review", "summary": "<substantive review result>", "url": "https://github.com/<owner>/<repo>/pull/<pr>#pullrequestreview-<id>"},
+    {"kind": "screenshot", "summary": "<rendered state shown>", "url": "https://github.com/user-attachments/assets/<id>"}
+  ]
+}
+```
 
-Do not leave stale worktrees for the next run to trip over. If cleanup cannot be performed (e.g., another session is actively using the workspace), report the blocker and retry cleanup as soon as possible.
+Use exactly those top-level keys and exactly `kind`, `summary`, and `url` in each
+evidence item. All evidence values must be meaningful nonempty strings. URLs must
+be trusted GitHub paths bound to the exact repository/issue/PR/head, or native
+GitHub attachment URLs. Test evidence must be an exact Actions run/job and review
+evidence must use the exact `#pullrequestreview-<id>` anchor; PR pages, `/files`,
+`/checks`, and arbitrary PR subpaths do not qualify. The dispatcher reads artifacts
+back and binds repository, exact assigned head, successful status, URL identity,
+and authenticated author. Reviews must be `APPROVED` or substantive non-blocking
+`COMMENTED`; blocking, dismissed, or trivial reviews fail. Include all three required kinds, and render every screenshot
+URL as `![descriptive alt](https://github.com/user-attachments/assets/<id>)` in
+the same comment. State, issue, PR, and head must match the sole label and exact
+assigned PR. Prose, stdout, empty evidence, bare screenshot URLs, and duplicate
+blocks do not count. The dispatcher reads every cited artifact back from GitHub:
+an Actions URL's run ID must equal the job's run ID and the fetched
+completed-successful run must match the exact repository and assigned head; the
+submitted review must match the exact repository, PR, head, artifact ID, and
+authenticated author. Missing, stale, unrelated, or wrong-head artifacts fail
+the handoff. Then stop tracked heavy-wrapper sessions, remove disposable
+outputs, and verify the assigned source revision remains clean and unchanged.
+Do not push or remove the worktree. The dispatcher verifies the exact PR head
+after process/cgroup termination and then deletes the workspace. If the tree is
+dirty or the PR head moved, report it; the dispatcher retains recovery evidence
+and fails the run instead of deleting state.
 
 ## Rules
 

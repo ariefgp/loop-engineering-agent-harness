@@ -63,7 +63,7 @@ def _cleanup_cgroup(path: Path, parent: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if len(arguments) < 6 or arguments[4] != "--":
+    if len(arguments) < 6:
         return 64
     try:
         gate_fd = int(arguments[0])
@@ -74,7 +74,16 @@ def main(argv: list[str] | None = None) -> int:
         return 64
     cgroup = Path(arguments[2])
     parent_cgroup = Path(arguments[3])
-    target = arguments[5:]
+    allowed_roots: list[Path] = []
+    position = 4
+    while position < len(arguments) and arguments[position] != "--":
+        if arguments[position] != "--allow-write" or position + 1 >= len(arguments):
+            return 64
+        allowed_roots.append(Path(arguments[position + 1]))
+        position += 2
+    target = arguments[position + 1 :]
+    if position >= len(arguments) or not target:
+        return 64
     child: subprocess.Popen[bytes] | None = None
     cleanup_started = False
 
@@ -118,6 +127,11 @@ def main(argv: list[str] | None = None) -> int:
                 str(Path(__file__).with_name("namespace_exec.py")),
                 "--scope",
                 str(cgroup),
+                *(
+                    argument
+                    for root in allowed_roots
+                    for argument in ("--allow-write", str(root))
+                ),
                 "--",
                 *target,
             ],

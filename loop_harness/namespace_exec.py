@@ -12,12 +12,21 @@ from loop_harness.landlock import restrict_mutating_filesystem_access
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if len(arguments) < 4 or arguments[0] != "--scope" or arguments[2] != "--":
+    if len(arguments) < 4 or arguments[0] != "--scope":
         return 64
     scope = Path(arguments[1])
-    target = arguments[3:]
+    allowed_roots: list[Path] = []
+    position = 2
+    while position < len(arguments) and arguments[position] != "--":
+        if arguments[position] != "--allow-write" or position + 1 >= len(arguments):
+            return 64
+        allowed_roots.append(Path(arguments[position + 1]))
+        position += 2
+    target = arguments[position + 1 :]
+    if position >= len(arguments) or not target:
+        return 64
     try:
-        restrict_mutating_filesystem_access(scope)
+        restrict_mutating_filesystem_access(scope, allowed_roots)
     except RuntimeError as exc:
         print(f"cannot isolate command filesystem access: {exc}", file=sys.stderr)
         return 70

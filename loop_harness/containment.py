@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import time
 import uuid
@@ -53,8 +54,9 @@ class CgroupScope:
         if kill.exists():
             try:
                 kill.write_text("1", encoding="ascii")
-            except FileNotFoundError:
-                pass
+            except OSError as exc:
+                if exc.errno not in {errno.ENOENT, errno.ENODEV}:
+                    raise
 
     def _directories_bottom_up(self) -> list[Path]:
         root = self.path.resolve()
@@ -87,8 +89,9 @@ class CgroupScope:
                         pass
                 if not self.path.exists():
                     return
-            except OSError:
-                pass
+            except OSError as exc:
+                if exc.errno == errno.ENODEV:
+                    return
             if time.monotonic() >= deadline:
                 raise RuntimeError(f"contained cgroup did not drain: {self.path.name}")
             time.sleep(0.02)

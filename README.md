@@ -32,8 +32,10 @@ Every issue must have exactly one workflow-state label.
 python -m loop_harness tick
   → read-only gh issue scans
   → dedupe + deterministic ordering
+  → resolve immutable source OIDs and contracts
   → short fcntl claim lock
   → SQLite reservations (one active issue and profile)
+  → dispatcher-created per-run Git worktrees
   → six Hermes profile subprocesses via argv + stdin
   → heartbeat + process identity
   → atomic redacted result summaries
@@ -47,6 +49,105 @@ The harness never invokes a separate coding-agent CLI. Profiles run as:
 
 Task instructions travel on stdin, not a shell command. `shell=True`, `eval`,
 and interpolated commands are not used.
+
+All production GitHub reads use a minimal environment allowlist that preserves
+only GitHub authentication/configuration variables and basic locale/path values.
+Ambient host selectors, proxies, and Git execution/configuration overrides are
+discarded. Every `gh api` call pins `--hostname github.com`; repository commands
+use `github.com/OWNER/REPO`.
+
+### Dispatcher-owned worktrees
+
+The registry checkout is control-plane state and is never a worker workspace. For
+each selected run, the dispatcher resolves the immutable source revision, fetches
+it into a private ref, and creates/selects a unique worktree before launching the
+profile there. Profiles must not check out `main`, create, switch, move, or remove
+worktrees or branches, or restore the shared checkout.
+
+Dev receives a dispatcher-selected task branch, commits and pushes all source
+changes to that exact assigned remote branch, and writes the required GitHub PR
+handoff. The dispatcher verifies the clean local head, remote branch, and handoff
+before deleting the worktree and private refs. QA runs detached at the exact PR
+head, never pushes source changes, and leaves cleanup to the dispatcher. PM and QA
+must leave the assigned source unchanged and clean.
+
+Every Dev PR must contain a GitHub closing keyword for the exact issue (for
+example, `Fixes #123`). A pasted issue URL alone is not a closing relationship.
+
+The dispatcher deletes clean terminal workspaces only after verification. Dirty
+or unpublished workspaces are retained and reported as recovery evidence; they
+must not be erased merely to make cleanup appear successful. Deterministic
+workspace intent is persisted with the reservation before preparation starts, so
+an interrupted or partially prepared run remains discoverable. A pending cleanup
+or cleanup-result persistence failure makes the originating tick fail while the
+terminal work outcome remains unchanged; the journal drives idempotent cleanup
+and result reconciliation on a later tick.
+
+For Dev runs, `strace` is a mandatory pre-launch prerequisite. A trusted parent
+traces successful writes/renames for only the assigned branch ref and reflog into
+a dispatcher-owned journal outside the worker's Landlock write roots. The audit
+file is a separate inode, not a hard link or polling observer, so truncating,
+replacing, expiring, or pruning worker Git metadata cannot erase recorded ref
+updates. The worker shares the host UID but remains unable to write the audit
+tree because Landlock is inherited only by the tracee, not the trusted tracer.
+This boundary assumes the dispatcher and kernel/strace are trusted; an unavailable
+tracer or confinement prerequisite fails before Dev launch.
+
+### Machine-readable handoff
+
+A successful run must leave exactly one fenced handoff block for its run ID
+across all comments on the issue. Replace placeholders with true values; do not add or omit JSON
+keys:
+
+```loop-engineering-handoff
+{
+  "schema_version": 1,
+  "run_id": "<run_id>",
+  "role": "<pm|dev|qa>",
+  "state": "<terminal-state>",
+  "issue": 0,
+  "pr_number": null,
+  "head_sha": null,
+  "evidence": [
+    {"kind": "<kind>", "summary": "<substantive result>", "url": "https://github.com/<durable-evidence>"}
+  ]
+}
+```
+
+The parser requires that exact top-level key set and exact evidence-item key set.
+`schema_version` is integer `1`; `issue` is the supplied issue number; `role` and
+`state` must match the run and sole final workflow label. PM uses JSON `null` for
+`pr_number` and `head_sha` and requires `plan`, or `blocker` for `need confirmation`.
+Dev normally uses the current open closing PR number and full pushed head SHA and
+requires `verification`; `need confirmation` requires `blocker`. An unchanged Dev
+source may use JSON `null` for PR/head and publish no branch, but any source change
+requires the exact assigned branch to be pushed and linked by an open closing PR. QA uses
+the assigned closing PR number and exact full head SHA and requires all three
+kinds: `test`, `review`, and `screenshot`. Every value in an evidence item must be
+a nonempty string, every URL must be a trusted `https://github.com` URL bound to
+the exact repository/issue/PR/head, and every QA screenshot must use a non-placeholder
+GitHub user-attachment UUID URL that is reachable without credentials and
+returns verified PNG, JPEG, GIF, or WebP image content. Release-download assets
+are not accepted as inline screenshot evidence. Redirects are accepted only
+while they remain on allowlisted GitHub-owned image-delivery hosts. The exact
+screenshot URL must also appear as an inline Markdown
+image in the same comment. A prose run
+marker, stdout, an empty evidence array, or duplicate fenced blocks is not proof.
+Dev `verification` must link an exact `actions/runs/<run>/job/<job>` result or an
+exact PR `#issuecomment-<id>` documenting verification. QA `test` must link an
+exact Actions run/job, and QA `review` must link the exact PR
+`#pullrequestreview-<id>` artifact. Generic PR pages, `/files`, `/checks`, and
+arbitrary PR subpaths are rejected. The dispatcher reads every referenced artifact
+back from GitHub and binds its repository, revision, author, status, and identity
+to the handoff. PM plan/blocker evidence likewise requires an authenticated exact
+issue comment containing the run identity and substantive plan/blocker content.
+Dev blocker evidence requires an exact `#issuecomment-<id>` URL on the assigned
+issue when source is unchanged or on the exact closing PR when source changed.
+The host-pinned API read-back must match its ID, HTML URL, repository,
+issue/PR number, authenticated author, run ID, blocker content, and evidence
+summary. Bare issue/PR pages and nonexistent or mismatched comments are rejected.
+QA review evidence accepts `APPROVED` or a substantive non-blocking `COMMENTED`
+review only; blocking, dismissed, trivial, or unrelated reviews are rejected.
 
 ## Queue order
 

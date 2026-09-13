@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import errno
 import os
+from collections.abc import Iterable
 from pathlib import Path
 
 _SYS_LANDLOCK_CREATE_RULESET = 444
@@ -14,7 +15,29 @@ _PR_SET_NO_NEW_PRIVS = 38
 _CGROUP_ROOT = Path("/sys/fs/cgroup").resolve()
 
 _ACCESS_WRITE_FILE = 1 << 1
-_CGROUP_MEMBERSHIP_ACCESS = _ACCESS_WRITE_FILE
+_ACCESS_REMOVE_DIR = 1 << 4
+_ACCESS_REMOVE_FILE = 1 << 5
+_ACCESS_MAKE_CHAR = 1 << 6
+_ACCESS_MAKE_DIR = 1 << 7
+_ACCESS_MAKE_REG = 1 << 8
+_ACCESS_MAKE_SOCK = 1 << 9
+_ACCESS_MAKE_FIFO = 1 << 10
+_ACCESS_MAKE_BLOCK = 1 << 11
+_ACCESS_MAKE_SYM = 1 << 12
+_ACCESS_REFER = 1 << 13
+_ACCESS_TRUNCATE = 1 << 14
+_MUTATION_ACCESS_V1 = (
+    _ACCESS_WRITE_FILE
+    | _ACCESS_REMOVE_DIR
+    | _ACCESS_REMOVE_FILE
+    | _ACCESS_MAKE_CHAR
+    | _ACCESS_MAKE_DIR
+    | _ACCESS_MAKE_REG
+    | _ACCESS_MAKE_SOCK
+    | _ACCESS_MAKE_FIFO
+    | _ACCESS_MAKE_BLOCK
+    | _ACCESS_MAKE_SYM
+)
 
 
 class _RulesetAttr(ctypes.Structure):
@@ -38,7 +61,16 @@ def _syscall(number: int, *arguments: object) -> int:
     return result
 
 
-def _existing_write_roots(scope: Path) -> list[Path]:
+def _mutation_access_for_abi(abi: int) -> int:
+    access = _MUTATION_ACCESS_V1
+    if abi >= 2:
+        access |= _ACCESS_REFER
+    if abi >= 3:
+        access |= _ACCESS_TRUNCATE
+    return access
+
+
+def _existing_write_roots(scope: Path, allowed_roots: Iterable[Path]) -> list[Path]:
     resolved_scope = scope.resolve(strict=True)
     try:
         resolved_scope.relative_to(_CGROUP_ROOT)
@@ -46,17 +78,16 @@ def _existing_write_roots(scope: Path) -> list[Path]:
         raise RuntimeError("owned cgroup scope is outside cgroupfs") from exc
     candidates = [
         resolved_scope,
-        Path.cwd(),
-        Path.home(),
-        Path(os.environ.get("TMPDIR", "/tmp")),
-        Path("/tmp"),
-        Path("/var/tmp"),
-        Path("/dev"),
-        Path(f"/run/user/{os.getuid()}"),
+        *allowed_roots,
+        Path("/dev/null"),
+        Path("/dev/zero"),
+        Path("/dev/random"),
+        Path("/dev/urandom"),
     ]
-    runtime = os.environ.get("LOOP_HARNESS_RUNTIME")
-    if runtime:
-        candidates.append(Path(runtime))
+    temporary = os.environ.get("TMPDIR")
+    if temporary:
+        candidates.append(Path(temporary))
+
     result: list[Path] = []
     seen: set[Path] = set()
     for candidate in candidates:
@@ -75,12 +106,10 @@ def _existing_write_roots(scope: Path) -> list[Path]:
     return result
 
 
-def restrict_mutating_filesystem_access(scope: Path) -> None:
-    """Prevent cgroup escape while retaining expected workspace write roots.
-
-    Landlock ABI v1 mediates the mutations needed to alter cgroup membership.
-    This is process-containment policy, not a general file-integrity sandbox.
-    """
+def restrict_mutating_filesystem_access(
+    scope: Path, allowed_roots: Iterable[Path] = ()
+) -> None:
+    """Restrict mutations to the owned cgroup and explicit per-run roots."""
     try:
         abi = _syscall(
             _SYS_LANDLOCK_CREATE_RULESET,
@@ -93,7 +122,8 @@ def restrict_mutating_filesystem_access(scope: Path) -> None:
     if abi < 1:
         raise RuntimeError("Landlock filesystem confinement is unavailable")
 
-    ruleset_attr = _RulesetAttr(_CGROUP_MEMBERSHIP_ACCESS)
+    mutation_access = _mutation_access_for_abi(abi)
+    ruleset_attr = _RulesetAttr(mutation_access)
     try:
         ruleset_fd = _syscall(
             _SYS_LANDLOCK_CREATE_RULESET,
@@ -105,10 +135,11 @@ def restrict_mutating_filesystem_access(scope: Path) -> None:
         raise RuntimeError("cannot create Landlock ruleset") from exc
 
     try:
-        for root in _existing_write_roots(scope):
+        for root in _existing_write_roots(scope, allowed_roots):
             path_fd = os.open(root, os.O_PATH | os.O_CLOEXEC)
             try:
-                rule = _PathBeneathAttr(_CGROUP_MEMBERSHIP_ACCESS, path_fd, 0)
+                allowed_access = mutation_access if root.is_dir() else _ACCESS_WRITE_FILE
+                rule = _PathBeneathAttr(allowed_access, path_fd, 0)
                 _syscall(
                     _SYS_LANDLOCK_ADD_RULE,
                     ruleset_fd,

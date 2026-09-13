@@ -141,12 +141,33 @@ class RuntimePaths:
     def results(self) -> Path:
         return self.root / "results"
 
+    @property
+    def terminalization(self) -> Path:
+        return self.root / "terminalization"
+
     def ensure(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.root.chmod(0o700)
-        for directory in (self.logs, self.results):
+        for directory in (self.logs, self.results, self.terminalization):
             directory.mkdir(exist_ok=True, mode=0o700)
             directory.chmod(0o700)
+
+    def private_worker_runtime(self, run_root: Path) -> "RuntimePaths":
+        """Create a run-owned runtime sharing only the host-wide heavy-lock inode."""
+        self.ensure()
+        descriptor = os.open(
+            self.heavy_lock, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600
+        )
+        os.close(descriptor)
+        os.chmod(self.heavy_lock, 0o600)
+        private = RuntimePaths(run_root.resolve() / "runtime")
+        private.ensure()
+        try:
+            os.link(self.heavy_lock, private.heavy_lock, follow_symlinks=False)
+        except FileExistsError:
+            if not os.path.samestat(self.heavy_lock.stat(), private.heavy_lock.stat()):
+                raise RuntimeError("private runtime heavy lock has the wrong inode")
+        return private
 
 
 class FileLock:
@@ -224,6 +245,11 @@ class ResultStore:
                 os.fsync(file.fileno())
             os.replace(temporary, target)
             os.chmod(target, 0o600)
+            directory_fd = os.open(self.directory, os.O_RDONLY | os.O_CLOEXEC)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
@@ -273,6 +299,11 @@ class HeavyRunner:
                         str(lease.fileno()),
                         str(scope.path),
                         str(scope.parent),
+                        *(
+                            ["--allow-write", str(cwd.resolve())]
+                            if cwd is not None
+                            else []
+                        ),
                         "--",
                         *argv,
                     ],

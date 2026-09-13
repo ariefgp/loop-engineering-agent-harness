@@ -116,6 +116,63 @@ memory plus `.agents/WORKFLOW.md`, its role contract, and project context files.
 The dispatcher never changes lifecycle labels; the selected profile performs
 and verifies transitions under this contract.
 
+### Durable run-linked handoff
+
+Before reporting successful completion, post exactly one fenced handoff block for
+the current run ID across all comments on the issue. Replace every placeholder with the true value
+and do not add or omit keys:
+
+```loop-engineering-handoff
+{
+  "schema_version": 1,
+  "run_id": "<run_id>",
+  "role": "<pm|dev|qa>",
+  "state": "<terminal-state>",
+  "issue": 0,
+  "pr_number": null,
+  "head_sha": null,
+  "evidence": [
+    {"kind": "<kind>", "summary": "<substantive result>", "url": "https://github.com/<durable-evidence>"}
+  ]
+}
+```
+
+The top-level object must contain exactly those keys. Each evidence object must
+contain exactly `kind`, `summary`, and `url`, all meaningful nonempty strings.
+Each URL must be a trusted GitHub URL bound to the exact repository, issue, PR,
+or head (or a native GitHub attachment). Dev verification requires an exact
+Actions run/job or documented PR verification comment. QA test evidence requires
+an exact Actions run/job, and QA review evidence requires the exact
+`#pullrequestreview-<id>` anchor. Plain PR pages, `/files`, `/checks`, and arbitrary
+PR subpaths do not qualify. Every artifact is read back from GitHub and must match
+the exact repository, revision, authenticated author, status, and URL identity.
+PM evidence must be the exact issue comment containing the run identity and
+substantive plan/blocker content. QA reviews must be `APPROVED` or substantive,
+non-blocking `COMMENTED`; blocking, dismissed, or trivial reviews do not qualify.
+Dev blocker evidence must be an exact `#issuecomment-<id>` URL: unchanged source
+uses a comment on the assigned issue, while changed source uses a comment on the
+exact closing PR. The dispatcher reads that comment through the host-pinned API
+and requires its ID, HTML URL, repository, issue/PR number, authenticated author,
+run ID, blocker content, and evidence summary to match. A bare issue/PR page or a
+missing, mismatched, or unrelated comment does not qualify.
+The run ID, role, issue, and state must
+match the assignment and the issue's sole final state label. PM uses JSON `null`
+for PR/head and includes `plan`, or `blocker` for `need confirmation`. Dev normally
+uses the current closing PR number and full pushed head SHA with `verification`;
+`need confirmation` requires `blocker`. Unchanged Dev source may use JSON `null`
+for PR/head and create no PR/push, while changed source requires the exact assigned
+branch pushed and one open closing PR. QA uses the assigned closing PR number
+and exact full head SHA and includes kinds `test`, `review`, and `screenshot`.
+The dispatcher reads every cited artifact back from GitHub: an Actions URL's run
+ID must equal the job's run ID and the fetched completed-successful run must match
+the exact repository and assigned head; reviews and verification comments must
+match the exact repository, PR, head, artifact ID, and authenticated author, with
+the review submitted. Missing, stale, unrelated, or wrong-head artifacts fail.
+Every QA screenshot URL must also appear as an inline Markdown image in that same
+comment. Worker stdout, prose outside the block, empty evidence, or more than one
+handoff block is never proof. The dispatcher retains the workspace and fails a
+completed run when any field or durable GitHub evidence does not match.
+
 ### Pre-check and scheduling
 
 `gh issue list` is executed before any profile starts. Empty queues use no model.
@@ -153,7 +210,10 @@ To reuse this workflow in another repo:
 
 ## PR and issue linking
 
-Every PR must explicitly link its related GitHub issue in the PR body. Use a full issue URL or GitHub closing/reference keyword such as `Fixes #<issue-number>`, `Closes #<issue-number>`, or `Related issue: <full URL of the issue in this repository>`.
+Every PR must explicitly link its related GitHub issue in the PR body with a
+GitHub closing keyword such as `Fixes #<issue-number>` or
+`Closes #<issue-number>`. A pasted issue URL, `Related issue`, title, branch name,
+or comment is not a closing relationship and does not satisfy this contract.
 
 If a PR is a follow-up, feedback fix, supplement, or stack on another PR, the PR body must also link the related parent/older PR. The related issue body should include a `Related PRs` section when multiple active PRs belong to the same issue.
 
@@ -325,23 +385,24 @@ Screenshots are mandatory evidence — not optional. See `.agents/agent-qa.md` f
 | Agent QA  | qa in progress (resume), qa ready (new) | review ready, feedback, or need confirmation |
 
 
-## Local workspace cleanup at handoff
+## Dispatcher-owned worktrees and cleanup
 
-Local clones and worktrees are disposable once the canonical work is safe on the remote. **Cleanup happens at handoff** — the moment an issue is moved to `qa ready`, `need confirmation`, `review ready`, or `feedback`, the owning agent must clean up its local workspace in the same turn, not later.
+Every run starts in a unique worktree created by the dispatcher at an immutable
+source revision. The supplied path and branch are authoritative. Workers must
+not create, move, switch, reset, or remove worktrees or branches, check out
+`main`, or alter/restore the shared control checkout.
 
-Cleanup steps at handoff (`qa ready`, `need confirmation`, `review ready`, or `feedback`):
+Before handoff, the worker must stop its tracked processes, remove disposable
+build output, leave the source tree clean, and write all required GitHub state
+and evidence. Dev must commit and push every source change to the exact assigned
+remote branch; PM and QA must leave the assigned revision unchanged and must not
+push source changes. The dispatcher waits for process/cgroup termination, then
+verifies the remote branch and GitHub handoff against local `HEAD` before
+deleting the clean worktree and private refs. Dirty or unpublished Dev state is
+retained as recovery evidence and the run fails rather than destroying work.
 
-1. Verify `git status --short` is clean, or remaining files are only disposable build/cache output.
-2. Verify the branch was pushed to the appropriate remote(s).
-3. Verify the PR/MR or issue has the final useful context, screenshots, logs, notes, and verification evidence.
-4. Remove the worktree: `git worktree remove <worktree-path>` (or `git worktree prune` if already deleted).
-5. Delete bulky generated folders from the worktree before removal if not already done: `node_modules`, `.next`, build outputs, caches, temp dirs.
-6. Verify no temporary dev/test server process was left behind by this run. Stop any `next-server`, Playwright, or npm child process started for verification.
-7. Confirm disk space is reclaimed after cleanup.
-
-Do not keep completed worktrees around "in case QA sends feedback." If feedback comes later, create a fresh worktree from the PR branch at that time.
-
-Keep only the smallest canonical checkout (main branch) needed for the next run. Do not delete another agent's active workspace without checking its current session/cron status.
+Feedback and resumed runs receive a new dispatcher-owned worktree pinned to the
+exact related PR head. No worker may delete or modify another run's workspace.
 
 ## Completion
 

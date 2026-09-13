@@ -13,6 +13,34 @@ class Role(str, Enum):
     QA = "qa"
 
 
+@dataclass(frozen=True)
+class ResolvedSource:
+    kind: str
+    sha: str
+    default_branch: str | None
+    remote_branch: str | None
+    pr_number: int | None
+
+
+@dataclass(frozen=True)
+class WorkspaceContext:
+    path: Path
+    source_sha: str
+    source_kind: str
+    local_branch: str | None
+    remote_branch: str | None
+    pr_number: int | None
+    private_ref: str
+    run_root: Path
+    git_dir: Path
+    expected_origin_url: str
+    baseline_commits: tuple[str, ...] = ()
+    repo_slug: str = ""
+    observed_objects: tuple[str, ...] = ()
+    audit_path: Path | None = None
+    observation_error: str | None = None
+
+
 _RESUME_STATES = {"in progress", "qa in progress"}
 _PRIORITY_RANK = {
     "urgent": 0,

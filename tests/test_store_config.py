@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import threading
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -109,6 +110,41 @@ class RegistryTests(unittest.TestCase):
 
 
 class StoreTests(unittest.TestCase):
+    def test_workspace_recovery_context_is_persisted_with_active_run(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = RunStore(Path(tmp) / "runs.sqlite3")
+            self.assertTrue(store.reserve(assignment(), "run-context", NOW))
+            context = {"path": "/private/run/worktree", "source_sha": "a" * 40}
+            store.attach_workspace("run-context", context)
+            row = store.get_run("run-context")
+            self.assertIsNotNone(row)
+            assert row is not None
+            self.assertEqual(context, json.loads(row["workspace_json"]))
+
+    def test_read_only_wal_access_creates_no_snapshot_or_temporary_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "runs.sqlite3"
+            store = RunStore(path)
+            writer = sqlite3.connect(path)
+            writer.execute("PRAGMA journal_mode=WAL")
+            writer.execute("PRAGMA wal_autocheckpoint=0")
+            self.assertTrue(store.reserve(assignment(), "active", NOW))
+            before = {item.name: item.stat().st_mtime_ns for item in root.iterdir()}
+
+            from unittest.mock import patch
+            with patch("tempfile.TemporaryDirectory", side_effect=AssertionError("snapshot write")), \
+                 patch("tempfile.mkstemp", side_effect=AssertionError("temporary write")):
+                reader = RunStore(path, read_only=True)
+                try:
+                    self.assertEqual({"mcgee"}, reader.active_profiles())
+                finally:
+                    reader.close()
+
+            after = {item.name: item.stat().st_mtime_ns for item in root.iterdir()}
+            writer.close()
+            self.assertEqual(before, after)
+
     def test_read_only_snapshot_reads_committed_database_state(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "runs.sqlite3"

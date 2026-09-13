@@ -35,14 +35,21 @@ worktree, branch, process, and competing-PR checks below to the supplied issue:
 
 5. **Ownership rule:** the harness run ID and profile reservation own the issue. Reclaiming requires 45 minutes without a harness heartbeat and no matching live process.
 
+## Dispatcher-owned workspace
+
+The dispatcher creates, selects, and owns this run's worktree and task branch.
+Work only in the supplied path. Do not check out `main`, create or switch
+branches, create/move/remove worktrees, or restore the shared checkout. Commit
+all source changes, push `HEAD` only to the exact assigned remote branch, and
+write the GitHub PR handoff. The dispatcher verifies and deletes a clean terminal
+workspace; dirty or unpublished state is retained as recovery evidence.
+
 ## Startup checklist
 
-1. Pull the latest `main` before starting work: `git checkout main && git pull --ff-only origin main`.
-2. Verify the supplied harness reservation and parallel-work guard.
-3. Remove `todo` or `feedback` → add `in progress`, then post an audit comment containing the harness run ID.
-4. Read the full issue body and all existing comments before coding.
-5. Create a new worktree from latest `main`: `git worktree add ../worktrees/<branch-name> -b <branch-name> main`. Use a unique worktree path (e.g. prefix with `torres-`) so it never collides with McGee's worktree.
-6. Branch naming: `feat/<task-id>-<short-description>` | `fix/<task-id>-<short-description>` | `chore/<task-id>-<short-description>`.
+1. Verify the supplied harness reservation and parallel-work guard.
+2. Remove `todo` or `feedback` → add `in progress`, then post an audit comment containing the harness run ID.
+3. Read the full issue body and all existing comments before coding.
+4. Verify the current path and branch match the dispatcher assignment; do not change either.
 
 ## Coding standards
 
@@ -78,7 +85,7 @@ Before marking `qa ready`, verify:
 ## PR linking requirements
 
 Every PR must make the issue relationship explicit:
-- Fresh `todo` work: `Fixes #<issue-number>` or full issue URL in PR body.
+- Fresh `todo` work: a closing keyword such as `Fixes #<issue-number>` or `Closes #<issue-number>` in the PR body; a pasted issue URL alone is insufficient.
 - `feedback` work: update the existing PR body so it still links the issue.
 - Multi-PR issues: ensure the issue body has a `Related PRs` section listing active PRs.
 
@@ -91,11 +98,52 @@ Identical to McGee (`agent-dev.md` "PR format"). Target branch: `main`.
 After commit, push, and PR creation: remove `in progress` → add `qa ready`.
 If blocked or needs clarification: remove `in progress` → add `need confirmation`, with the blocker documented.
 
-## Post-handoff cleanup (mandatory)
+## Post-handoff terminal state (mandatory)
 
-Identical to McGee (`agent-dev.md` "Post-handoff cleanup"):
-1. Verify `git status` clean; branch pushed; PR/issue has final context.
-2. Delete `node_modules`, `.next`, build outputs.
-3. Remove the worktree: `git worktree remove <path>`.
-4. Stop any dev/test server started by this run.
-5. Confirm disk space reclaimed.
+Identical to McGee (`agent-dev.md` "Post-handoff terminal state"): commit and
+push all changes to the assigned branch, write the GitHub handoff, leave the
+workspace clean, and stop owned processes. Do not switch branches, restore the
+shared checkout, or remove the worktree; dispatcher verification and cleanup own
+those actions, with dirty or unpublished state retained for recovery.
+
+Post exactly one block for the current run ID across all issue comments, replacing
+zero/placeholders with the true issue, closing PR, full pushed head SHA, and substantive evidence:
+
+```loop-engineering-handoff
+{
+  "schema_version": 1,
+  "run_id": "<run_id>",
+  "role": "dev",
+  "state": "qa ready",
+  "issue": 0,
+  "pr_number": 0,
+  "head_sha": "<full-hex-pushed-head-sha>",
+  "evidence": [
+    {"kind": "verification", "summary": "<exact commands and results>", "url": "https://github.com/<owner>/<repo>/actions/runs/<run-id>/job/<job-id>"}
+  ]
+}
+```
+
+Use exactly those top-level and evidence keys. Evidence values must be meaningful
+nonempty strings with a trusted GitHub URL bound to the exact repository,
+issue and exact PR/head. Verification must link to an exact Actions run/job or a
+documented PR verification comment; a commit, PR page, `/files`, `/checks`, or
+arbitrary PR subpath is not verification. The dispatcher reads the artifact back
+and binds repository, exact pushed head, successful status, URL identity, and
+authenticated author as applicable. The state, issue, PR, and head must match GitHub
+and the assigned workspace. Prose, stdout, empty evidence, and duplicate
+blocks are not handoff proof.
+The dispatcher reads the cited artifact back from GitHub. An Actions URL's run ID
+must equal the job's run ID and the fetched completed-successful run must match
+the exact repository and pushed head. A verification comment must match the exact
+repository, PR, artifact ID, pushed head, and authenticated author. Missing,
+stale, unrelated, or wrong-head artifacts fail the handoff.
+
+For `need confirmation`, follow `agent-dev.md` exactly: unchanged source uses
+JSON null PR/head, no push or PR, and meaningful `blocker` evidence. Changed
+source must be pushed to the assigned branch and linked by one open PR containing
+a closing keyword; report that exact PR/head with `blocker` evidence. Cite an
+exact `#issuecomment-<id>` on the assigned issue for unchanged source or on the
+exact closing PR for changed source. Its host-pinned API read-back must match the
+comment ID, HTML URL, repository, issue/PR number, authenticated author, run ID,
+blocker content, and evidence summary; bare pages and mismatched comments fail.

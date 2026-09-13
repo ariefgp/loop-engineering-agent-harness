@@ -60,6 +60,14 @@ def _tick_json(result: TickResult) -> dict[str, object]:
             for item in result.results
         ],
         "reclaimed": result.reclaimed,
+        "failures": [
+            {
+                "repository": item.repository,
+                "stage": item.stage,
+                "error": item.error,
+            }
+            for item in result.failures
+        ],
     }
 
 
@@ -177,7 +185,19 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigError, GitHubError, OSError, RuntimeError, sqlite3.Error, ValueError) as exc:
         print(f"loop-harness: {redact_text(str(exc))}", file=sys.stderr)
         return 1
+    if result.mode == "live" and len(result.results) != len(result.assignments):
+        print(
+            "loop-harness: assignment/result count mismatch; one or more results were dropped",
+            file=sys.stderr,
+        )
+        return 1
     print(json.dumps(_tick_json(result), indent=2, sort_keys=True))
-    if any(item.status != "completed" for item in result.results):
+    for failure in result.failures:
+        print(
+            f"loop-harness: {failure.repository} {failure.stage}: "
+            f"{redact_text(failure.error)}",
+            file=sys.stderr,
+        )
+    if result.failures or any(item.status != "completed" for item in result.results):
         return 1
     return 0
