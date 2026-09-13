@@ -5,7 +5,9 @@ import subprocess
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
+import loop_harness.github as github_module
 from loop_harness.config import RepositoryConfig
 from loop_harness.github import (
     GitHubClient, GitHubError, _default_runner, _screenshot_url_reachable,
@@ -820,6 +822,7 @@ class GitHubClientTests(unittest.TestCase):
 
         invalid = (
             ("https://attacker.invalid/captured.png", "image/png", b"\x89PNG\r\n\x1a\n"),
+            ("https://github-production-user-asset-attacker.s3.amazonaws.com/image.png", "image/png", b"\x89PNG\r\n\x1a\n"),
             (delivery, "text/html", b"<html>not an image</html>"),
             (delivery, "image/png", b"not-a-png"),
             (delivery, "application/octet-stream", b"\xff\xd8\xffimage"),
@@ -837,6 +840,63 @@ class GitHubClientTests(unittest.TestCase):
             raise OSError("network unavailable")
 
         self.assertFalse(_screenshot_url_reachable(attachment, request=unavailable))
+
+    def test_screenshot_request_authenticates_only_initial_github_host(self) -> None:
+        class Response:
+            status = 206
+            headers = {"Content-Type": "image/png"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _size: int) -> bytes:
+                return b"\x89PNG\r\n\x1a\nrest"
+
+        seen: list[str | None] = []
+
+        class Opener:
+            def open(self, request, timeout):
+                self.assert_timeout = timeout
+                seen.append(request.get_header("Authorization"))
+                return Response()
+
+        with patch.object(
+            github_module.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess([], 0, "secret-token\n", ""),
+        ), patch.object(github_module, "build_opener", return_value=Opener()):
+            status, _, _, _ = github_module._screenshot_request(
+                "https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc"
+            )
+        self.assertEqual(206, status)
+        self.assertEqual(["Bearer secret-token"], seen)
+
+        seen.clear()
+        with patch.object(
+            github_module.subprocess,
+            "run",
+            side_effect=AssertionError("token lookup must not run for delivery hosts"),
+        ), patch.object(github_module, "build_opener", return_value=Opener()):
+            status, _, _, _ = github_module._screenshot_request(
+                "https://github-production-user-asset-6210df.s3.amazonaws.com/image.png"
+            )
+        self.assertEqual(206, status)
+        self.assertEqual([None], seen)
+
+    def test_screenshot_request_fails_closed_when_token_lookup_fails(self) -> None:
+        with patch.object(
+            github_module.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess([], 1, "", "auth failed"),
+        ), patch.object(github_module, "build_opener") as opener:
+            result = github_module._screenshot_request(
+                "https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc"
+            )
+        self.assertEqual((401, None, None, b""), result)
+        opener.assert_not_called()
 
     def test_dev_handoff_requires_open_closing_pr_at_pushed_sha_and_qa_ready(self) -> None:
         sha = "d" * 40

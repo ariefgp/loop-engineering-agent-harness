@@ -64,6 +64,7 @@ _REVIEW_BLOCKER = re.compile(
 )
 _SCREENSHOT_DELIVERY_HOSTS = {
     "github.com",
+    "github-production-user-asset-6210df.s3.amazonaws.com",
     "objects.githubusercontent.com",
     "user-images.githubusercontent.com",
     "private-user-images.githubusercontent.com",
@@ -123,13 +124,7 @@ def _allowed_screenshot_redirect(url: str) -> bool:
         return False
     return bool(
         parsed.scheme == "https"
-        and (
-            parsed.hostname in _SCREENSHOT_DELIVERY_HOSTS
-            or re.fullmatch(
-                r"github-production-user-asset-[a-z0-9-]+\.s3\.amazonaws\.com",
-                parsed.hostname or "",
-            ) is not None
-        )
+        and parsed.hostname in _SCREENSHOT_DELIVERY_HOSTS
         and parsed.username is None and parsed.password is None and parsed.port is None
     )
 
