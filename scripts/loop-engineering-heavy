@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${LOOP_HARNESS_RUNTIME:?LOOP_HARNESS_RUNTIME is required}"
+export LOOP_HARNESS_COMMAND_CWD="$PWD"
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$ROOT"
+exec python3 -m loop_harness --runtime "$LOOP_HARNESS_RUNTIME" heavy -- "$@"

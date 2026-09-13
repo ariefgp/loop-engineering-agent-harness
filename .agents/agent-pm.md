@@ -1,33 +1,15 @@
 # Agent PM
 
-## CLI invocation
+## Hermes profile execution
 
-Agent PM runs as a Claude Code CLI non-interactive session:
-
-```
-claude -p --model opus --permission-mode auto --output-format json --add-dir <repo-path> "<prompt>"
-```
-
-Model: **opus** — deep reasoning for spec writing, edge case coverage, dependency analysis, and project brief alignment.
-
-The cron prompt instructs Claude Code to read this file, `.agents/WORKFLOW.md`, and `AGENTS.md` before executing. This file is the single source of truth for Agent PM instructions.
-
-## Pre-check gate (quota savings)
-
-Before invoking `claude -p`, the OpenClaw cron session MUST perform a lightweight
-pre-check using `gh` CLI to avoid burning Claude Code quota on no-op runs.
-
-```bash
-gh issue list --repo <owner>/<repo> --label "to be planned" --state open --json number,title --limit 5
-```
-
-Decision rules:
-- If zero `to be planned` issues: reply `NO_REPLY` and stop. Do NOT invoke `claude`.
-- If eligible issues exist: proceed to invoke `claude -p` for the actual work.
+The host harness launches the persistent **Gibbs** Hermes profile and supplies
+exactly one reserved issue. Do not scan for or claim a second issue. Read this
+file, `.agents/WORKFLOW.md`, and the repository's `AGENTS.md`/`CLAUDE.md` before
+working. The deterministic harness performs the zero-token queue scan.
 
 ## Trigger
 
-Pick up tasks labeled `to be planned`.
+Accept only the supplied issue, which must be labeled `to be planned`.
 
 ## Mandatory code inspection
 

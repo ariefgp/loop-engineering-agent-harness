@@ -1,62 +1,34 @@
 # Agent Dev
 
-## CLI invocation
+## Hermes profile execution
 
-Agent Dev runs as a Claude Code CLI non-interactive session:
+The host harness launches the persistent **McGee** Hermes profile and supplies
+exactly one atomically reserved issue. Do not scan for or claim a second issue.
+Read this file, `.agents/WORKFLOW.md`, and the repository's
+`AGENTS.md`/`CLAUDE.md` before working. The deterministic harness performs the
+zero-token queue scan and enforces one active issue per profile.
 
-```
-claude -p --model sonnet --permission-mode auto --output-format json --add-dir <repo-path> "<prompt>"
-```
-
-Model: **sonnet** — fast, capable implementation, git operations, and PR creation.
-
-The cron prompt instructs Claude Code to read this file, `.agents/WORKFLOW.md`, and `AGENTS.md` before executing. This file is the single source of truth for Agent Dev instructions.
-
-## Pre-check gate (quota savings)
-
-Before invoking `claude -p`, the OpenClaw cron session MUST perform a lightweight
-pre-check using `gh` CLI to avoid burning Claude Code quota on no-op runs.
-
-```bash
-# Step 1: Global in-progress guard
-gh issue list --repo <owner>/<repo> --label "in progress" --state open --json number,title --limit 5
-
-# Step 2: Check for eligible trigger labels
-gh issue list --repo <owner>/<repo> --label "todo" --state open --json number,title --limit 5
-gh issue list --repo <owner>/<repo> --label "feedback" --state open --json number,title --limit 5
-```
-
-Decision rules:
-- If `in progress` issues exist: proceed to invoke `claude -p` so the global in-progress guard can run against that issue — verify whether it is already done (repair the handoff), actively claimed by another agent (report and stop), or needs resuming (resume it). Do NOT start a new `todo`/`feedback` issue while a valid `in progress` issue exists.
-- If zero `in progress`, zero `todo`, AND zero `feedback` issues: reply `NO_REPLY` and stop. Do NOT invoke `claude`.
-- If eligible issues exist: proceed to invoke `claude -p` for the actual work.
-
-This ensures Claude Code subscription quota is only consumed when there is real
-work to do.
+For installs, builds, dev servers, browser tests, Docker, or local Supabase,
+run the command through `$LOOP_HARNESS_HEAVY <command>`. The heavy
+lease serializes only that command; ordinary inspection and editing stay
+concurrent.
 
 ## Trigger
 
-Pick up tasks labeled `todo` or `feedback`.
+Accept only the supplied issue, which must be labeled `todo`, `feedback`, or
+resumable `in progress`.
 
-Do not pick up or work on another task while you still have an unfinished task in progress. Finish the current task first, including commit, push, PR creation/update, verification, and label handoff, before starting any other task.
+Do not work on another task during this run. Finish the supplied task, including
+commit, push, PR creation/update, verification, and label handoff.
 
 
-## Global in-progress guard (resume before starting new)
+## Supplied-work guard
 
-Before picking up any new `todo` or `feedback` issue, Agent Dev must check whether any open issue already has the `in progress` state label. This guard is global across Dev runs, not only within the current cron/session.
-
-If any `in progress` issue exists:
-
-1. Do **not** pick a different `todo` or `feedback` issue.
-2. Inspect the `in progress` issue, its latest comments, its related PR, and any recent agent activity.
-3. **Check if the issue is already done:** Is the PR merged? Are all acceptance criteria met? Is the work complete?
-4. **Check if another agent is actively working on it:** use the claim protocol in `.agents/WORKFLOW.md` ("Issue claiming and staleness"). A claim comment with activity in the last 2 hours from another agent means do not interfere — report and stop. A stale or missing claim means the issue is resumable; post your own claim comment before continuing.
-5. **If the issue is NOT done and no other agent is working on it:** Resume work on that `in progress` issue. Pull the existing PR branch, review what was done, complete the remaining work, and hand off properly. Do not start new work until this is resolved.
-6. If an implementation PR already exists and the work IS complete (all criteria met, tests pass, PR is ready), repair the stale handoff by moving the issue from `in progress` to `qa ready`, then add an issue comment explaining the cleanup, related PR, resulting state label, and blocker/confirmation status.
-7. If the issue is genuinely blocked or unclear, move it from `in progress` to `need confirmation` in the same action, ensure the blocker is documented in a GitHub issue comment, notify/update the related channel, and stop.
-8. Only when there are zero valid `in progress` issues (or the only `in progress` issue is done or being actively worked by another agent) may Agent Dev select a new `todo` or `feedback` issue.
-
-This prevents stale `in progress` issues from accumulating and ensures interrupted work is resumed before starting new work.
+The scheduler already prioritizes resumable `in progress` work. Work only on
+the supplied reservation. Inspect its full issue, comments, related PR, and
+recent activity. If it is complete, repair the handoff to `qa ready`; if it is
+blocked, move it to `need confirmation`; if it conflicts with another active
+reservation, report the inconsistency and stop. Never choose replacement work.
 
 ## Process-level one-task guard
 
@@ -77,15 +49,28 @@ When processes exist:
 4. If another agent's process occupies a needed port, choose a safe alternate port for Agent Dev's task or coordinate/report the conflict; do not start duplicate Agent Dev servers on top of stale Agent Dev processes.
 5. If ownership cannot be determined safely, report the blocker instead of killing processes or starting another server.
 
-Agent Dev must clean up the temporary dev/test servers and child processes it started on success, failure, timeout, interruption, and restart recovery. A previous incident left multiple stale Agent Dev dev-server processes running after cron retries/stalls, causing OOM; do not repeat this.
+Agent Dev must clean up the temporary dev/test servers and child processes it
+started on success, failure, timeout, interruption, and restart recovery. Start
+every such command through `$LOOP_HARNESS_HEAVY` using a tracked execution
+session rather than an untracked shell background process. Retain its wrapper
+PID/start identity and harness-owned cgroup evidence.
 
-**8 GB VPS resource rule:** never run a manually started dev server concurrently with a Playwright command that manages its own `webServer`, with `next build`, or with another browser-test stack. Before starting Playwright or a build, stop the manual dev server first. A Playwright config may legitimately start its app and auth servers as one test stack, but no additional manual server may remain. Capture root PIDs when starting servers, install a cleanup trap where practical, and after every failed/timed-out/retried test command stop its full process tree before retrying. Verify by both process list and listening port; killing only the parent is insufficient when Next.js children have been re-parented.
+**Host resource rule:** never run a manually started dev server concurrently
+with a Playwright command that manages its own `webServer`, with a build, or
+with another browser-test stack. Stop the manual server first. A repository's
+test configuration may legitimately start the services required by one test
+stack, but no additional manual server may remain. After every failed, timed
+out, or retried heavy command, stop the tracked wrapper so it kills its owned
+cgroup before releasing the heavy lease. Recovery must use the recorded
+harness-owned cgroup, never a numeric process group or port match. Verify owned
+processes
+and listening ports; a listener alone is never permission to kill by port.
 
 ## Startup checklist
 
 1. Pull the latest `main` before starting work: `git checkout main && git pull --ff-only origin main`.
-2. Run the global in-progress guard and the process-level one-task guard before claiming any issue.
-3. Remove `todo` or `feedback` label → Add `in progress`, and claim the issue in the same action: assign yourself when possible and post `CLAIMED by Agent Dev (<engine>) at <ISO-8601 UTC timestamp>` as an issue comment (see WORKFLOW.md "Issue claiming and staleness").
+2. Verify the supplied SQLite reservation is active for this profile and uniquely owns this `repository + issue`; then apply the repository-specific process, worktree, branch, and competing-PR constraints below. Do not perform a global label guard or select replacement work.
+3. Verify the harness reservation matches this profile and issue, then remove `todo` or `feedback` → add `in progress`; optionally post a human-readable claim comment referencing the harness run ID (see WORKFLOW.md "Harness reservations and staleness").
 4. Read the full issue body and all existing comments on the issue before coding. Treat comments as part of the task context, including PM notes, human clarifications, QA findings, blockers, approval decisions, and attached evidence.
 5. Create the new worktree from latest `main`: `git worktree add ../worktrees/<branch-name> -b <branch-name> main`.
 6. Branch naming: `feat/<task-id>-<short-description>` | `fix/<task-id>-<short-description>` | `chore/<task-id>-<short-description>`
@@ -141,21 +126,27 @@ This keeps QA feedback threaded on the same PR and avoids duplicate PRs for the 
 - Address each reported bug individually.
 - Do not refactor unrelated code in a feedback fix — keep the diff focused.
 
-## Runtime env for local tests
+## Repository-defined runtime configuration
 
-Some issues require runtime environment variables for local tests, Playwright, or pages that touch database/API-backed flows.
+Some issues require runtime configuration or credentials for local or remote
+verification. Do not assume that GitHub Actions, a local env file, a preview
+deployment, or any named secret exists.
 
-Before guessing env values or marking an env-dependent issue blocked:
+Before guessing values or marking an environment-dependent issue blocked:
 
-1. Check GitHub Actions repository variables/secrets metadata for the required variable names.
-2. Use the local runtime env file the human owner provided at `<runtime-env-file-path>`.
-3. In the active worktree, symlink it with:
-   ```bash
-   ln -sf <runtime-env-file-path> .env.local
-   ```
-4. The human owner explicitly allows Agent Dev to access/use this env file for local testing. It is okay to load it via the framework, scripts, tests, or controlled shell commands when needed for verification.
-5. Do not print, commit, paste, or expose secret values in logs, GitHub comments, PRs, screenshots, or final output. If inspection is necessary, prefer checking variable presence/names rather than values.
-6. Keep `.env.local` untracked. If the file is missing or the env-backed check fails with a concrete error, report that blocker clearly instead of fabricating env values.
+1. Read the target repository's `AGENTS.md`/`CLAUDE.md`, issue evidence,
+   workflows, and PR checks to determine which verification environment and
+   configuration names are actually required.
+2. Use a local env file, credential manager, CI job, or deployed environment
+   only when the target contract/context provides and authorizes that path.
+3. If `<runtime-env-file-path>` is configured and approved for this target,
+   connect it to the worktree using the target repository's documented method;
+   do not assume the destination filename is `.env.local`.
+4. Do not print, commit, paste, or expose secret values in logs, GitHub comments,
+   PRs, screenshots, or final output. Prefer checking required names/presence.
+5. Keep all credential-bearing files untracked. If required configuration is
+   missing or a defined verification path fails, report the concrete blocker
+   instead of fabricating values or weakening verification.
 
 ## Completion checklist
 
@@ -218,7 +209,8 @@ Cleanup steps:
 3. Verify the PR/MR or issue has the final useful context, screenshots, logs, notes, and verification evidence.
 4. Delete bulky generated folders from the worktree: `node_modules`, `.next`, build outputs, caches, temp dirs.
 5. Remove the worktree: `git worktree remove <worktree-path>` (or `git worktree prune` if already deleted).
-6. Stop any temporary dev/test server process started by this run: `next-server`, Playwright, npm child processes. No stale processes should remain.
+6. Stop tracked heavy-wrapper sessions and verify their owned cgroups
+   and listeners are gone. Never clean up by broad process-name or port match.
 7. Confirm disk space is reclaimed.
 
 Do not keep completed worktrees around "in case QA sends feedback." If feedback comes later, create a fresh worktree from the PR branch at that time.

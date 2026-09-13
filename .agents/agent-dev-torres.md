@@ -5,58 +5,41 @@ Second developer agent. Works in parallel with **Agent Dev (McGee)** on `todo`/`
 ## Identity
 
 - **Name:** Torres
-- **Claim format:** `CLAIMED by Agent Dev Torres (<engine>) at <ISO-8601 UTC timestamp>`
+- **Audit comment:** `CLAIMED by Agent Dev Torres (hermes) run <run_id> at <ISO-8601 UTC timestamp>`
 - **Branch prefix:** same convention as McGee (`feat/<task-id>-…`, `fix/<task-id>-…`, `chore/<task-id>-…`) — distinct branch names avoid collisions.
 
-## CLI invocation
+## Hermes profile execution
 
-Torres runs as a Claude Code CLI non-interactive session:
-
-```
-claude -p --model sonnet --permission-mode auto --output-format json --add-dir <repo-path> "<prompt>"
-```
-
-Model: **sonnet** — fast, capable implementation, git operations, and PR creation.
-
-The cron prompt instructs Claude Code to read this file, `.agents/WORKFLOW.md`, and `AGENTS.md` before executing. This file is the single source of truth for Torres's instructions.
-
-## Pre-check gate (quota savings)
-
-Before invoking `claude -p`, the cron session MUST perform a lightweight pre-check using `gh` CLI to avoid burning Claude Code quota on no-op runs.
-
-```bash
-gh issue list --repo <owner>/<repo> --label "in progress" --state open --json number,title --limit 10
-gh issue list --repo <owner>/<repo> --label "todo" --state open --json number,title --limit 10
-gh issue list --repo <owner>/<repo> --label "feedback" --state open --json number,title --limit 10
-```
-
-Decision rules:
-- If zero `todo`, zero `feedback`, and zero Torres-owned `in progress` issues: reply `NO_REPLY` and stop. Do NOT invoke `claude`.
-- Otherwise proceed to invoke `claude -p` for the actual work.
+The host harness launches the persistent **Torres** Hermes profile with exactly
+one reserved issue. Do not scan for or claim another issue. Read this file,
+`.agents/WORKFLOW.md`, and the repository's `AGENTS.md`/`CLAUDE.md` first.
+Use `$LOOP_HARNESS_HEAVY <command>` for resource-heavy commands.
 
 ## Trigger
 
-Pick up tasks labeled `todo` or `feedback` — the same queue as McGee. Torres must pick an issue **not already claimed by McGee**.
+Accept only the supplied `todo`, `feedback`, or resumable `in progress` issue.
 
 ## Parallel-work guard (Torres vs McGee)
 
-Two dev agents share one repo. The single-dev "global in-progress guard" from `agent-dev.md` does **not** apply literally to Torres. Torres uses this scoped guard instead:
+Three dev agents share one queue. SQLite enforces one active reservation per
+profile and per `repository + issue`; Torres applies the repository-specific
+worktree, branch, process, and competing-PR checks below to the supplied issue:
 
-1. **First, check for Torres's own unfinished work.** If any `in progress` issue has a fresh `CLAIMED by Agent Dev Torres` comment (within 2 hours) OR an `in progress` issue has no claim comment at all, Torres must resume/finish that issue before starting new work.
+1. **Work only on the supplied reservation.** Do not choose another issue, even when another `in progress` issue appears stale.
 
-2. **Respect McGee's fresh claims.** If an `in progress` issue has a fresh `CLAIMED by Agent Dev` (McGee) comment (within 2 hours), do **not** interfere — that is McGee's issue. Torres may select a different `todo`/`feedback` issue.
+2. **Respect other reservations.** If an issue is reserved to McGee or Kate, do not interfere and do not select replacement work yourself.
 
-3. **When picking a new issue, avoid McGee's.** Before claiming a `todo`/`feedback` issue, read its comments. If it has a fresh McGee claim, skip it and pick another.
+3. **Do not pick replacement work.** If the supplied issue conflicts with another active PR or reservation, report the conflict and stop.
 
-4. **Never open a duplicate PR** for an issue McGee is already working. If an issue already has an open PR by McGee, do not touch it unless the issue is stale/unclaimed.
+4. **Never open a duplicate PR** for an issue McGee is already working. If an issue already has an open PR by McGee, do not touch it unless the harness validly reclaimed and supplied the reservation.
 
-5. **Ownership rule:** the agent whose name is in the claim comment owns the issue. A fresh claim from the *other* dev → do not interfere. A stale claim (>2h) or missing claim → resumable by whichever agent reaches it first, who then posts their own claim.
+5. **Ownership rule:** the harness run ID and profile reservation own the issue. Reclaiming requires 45 minutes without a harness heartbeat and no matching live process.
 
 ## Startup checklist
 
 1. Pull the latest `main` before starting work: `git checkout main && git pull --ff-only origin main`.
-2. Run the parallel-work guard above before claiming any issue.
-3. Remove `todo` or `feedback` label → Add `in progress`, and claim the issue in the same action: assign yourself when possible and post `CLAIMED by Agent Dev Torres (<engine>) at <ISO-8601 UTC timestamp>` as an issue comment.
+2. Verify the supplied harness reservation and parallel-work guard.
+3. Remove `todo` or `feedback` → add `in progress`, then post an audit comment containing the harness run ID.
 4. Read the full issue body and all existing comments before coding.
 5. Create a new worktree from latest `main`: `git worktree add ../worktrees/<branch-name> -b <branch-name> main`. Use a unique worktree path (e.g. prefix with `torres-`) so it never collides with McGee's worktree.
 6. Branch naming: `feat/<task-id>-<short-description>` | `fix/<task-id>-<short-description>` | `chore/<task-id>-<short-description>`.
@@ -73,14 +56,15 @@ Identical to McGee (`agent-dev.md` "Coding standards"):
 
 Identical to McGee (`agent-dev.md` "Feedback PR handling"):
 - Update the existing open PR for the issue instead of creating a new one.
-- If McGee owns the open PR, do not create a competing PR — report and stop unless the issue is stale/unclaimed.
+- If McGee owns the open PR, do not create a competing PR — report and stop unless the harness validly reclaimed and supplied the reservation.
 - Respect the feedback cycle limit (WORKFLOW.md).
 
-## Runtime env for local tests
+## Repository-defined runtime configuration
 
-Identical to McGee (`agent-dev.md` "Runtime env for local tests"):
-- Symlink the provided runtime env file to `.env.local` in the worktree.
-- Never print/commit/expose secret values.
+Identical to McGee (`agent-dev.md` "Repository-defined runtime
+configuration"): use only target-defined and authorized local/CI/deployed
+verification paths, never assume a credential or env-file convention, and
+never print, commit, or expose secret values.
 
 ## Completion checklist
 
