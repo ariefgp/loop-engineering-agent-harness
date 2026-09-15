@@ -13,6 +13,54 @@ class Role(str, Enum):
     QA = "qa"
 
 
+class WorkflowKind(str, Enum):
+    SINGLE = "single"
+    GRAPH = "graph"
+
+
+class NodeType(str, Enum):
+    DETERMINISTIC = "deterministic"
+    AGENT = "agent"
+    VERIFIER = "verifier"
+    REDUCER = "reducer"
+    HUMAN_GATE = "human_gate"
+    INTEGRATOR = "integrator"
+
+
+class LeaseMode(str, Enum):
+    SHARED = "shared"
+    EXCLUSIVE = "exclusive"
+
+
+@dataclass(frozen=True)
+class ConflictRequest:
+    domain: str
+    mode: LeaseMode
+
+
+@dataclass(frozen=True)
+class WorkUnit:
+    unit_id: str
+    workflow_id: str
+    node_id: str
+    workflow_kind: WorkflowKind
+    node_type: NodeType
+    profile: str | None
+    capabilities: tuple[str, ...]
+    conflicts: tuple[ConflictRequest, ...]
+    payload: dict[str, object]
+    priority: int
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class ClaimedWorkUnit:
+    work_unit: WorkUnit
+    attempt_id: str
+    attempt_number: int
+    claim_token: str
+
+
 @dataclass(frozen=True)
 class ResolvedSource:
     kind: str
